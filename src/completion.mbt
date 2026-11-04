@@ -36,6 +36,7 @@ fn render_shell_scan(
 ) -> Unit {
   sb.write_string("  while (( pos < " + limit + " )); do\n")
   sb.write_string("    case \"" + dollar + "{words[pos]}\" in\n")
+  sb.write_string("      --) return ;;\n")
   for opt in options {
     let long = "'--" + escape_single_quote(opt.name) + "'"
     let short = if has_short(opt) {
@@ -151,8 +152,39 @@ pub fn CliApp::render_bash_completion(self : CliApp) -> String {
   let sb = StringBuilder()
   let fn_name = "_" + self.name.replace(old="-", new="_")
   sb.write_string(fn_name + "() {\n")
-  sb.write_string("  local cur prev words cword\n")
-  sb.write_string("  _init_completion || return\n")
+  sb.write_string("  COMPREPLY=()\n")
+  // Bash splits words at COMP_WORDBREAKS (notably '=' and ':'). Rejoin
+  // adjacent pieces using the original line, preserving actual whitespace.
+  // Never eval command-line text: quotes and substitutions remain inert.
+  sb.write_string(
+    (
+      #|  local -a words=()
+      #|  local cword=0 i word gap
+      #|  local line="${COMP_LINE:0:COMP_POINT}"
+      #|  for ((i = 0; i <= COMP_CWORD; i++)); do
+      #|    word="${COMP_WORDS[i]}"
+      #|    if (( i == COMP_CWORD && $# >= 2 )); then
+      #|      word="$2"
+      #|    fi
+      #|    if [[ -n "$word" ]]; then
+      #|      gap="${line%%"$word"*}"
+      #|      line="${line#*"$word"}"
+      #|    else
+      #|      gap="$line"
+      #|    fi
+      #|    if (( i == 0 )); then
+      #|      words[0]="$word"
+      #|    elif [[ -n "$gap" ]]; then
+      #|      ((cword += 1))
+      #|      words[cword]="$word"
+      #|    else
+      #|      words[cword]+="$word"
+      #|    fi
+      #|  done
+      #|
+    ),
+  )
+  sb.write_string("  local cur=\"" + dollar + "{words[cword]}\"\n")
   sb.write_string("  local pos=1\n")
   sb.write_string("  " + fn_name + "_root\n")
   sb.write_string("}\n\n")
@@ -296,27 +328,113 @@ fn render_fish_options(
 }
 
 ///|
-fn render_fish_subcommands(
+// Emit one state per command path. Option values must not select subcommands.
+fn render_fish_states(
   sb : StringBuilder,
-  app_name : String,
-  condition : String,
+  state : String,
+  options : Array[OptionDef],
   commands : Array[CommandDef],
 ) -> Unit {
-  for cmd in commands {
+  sb.write_string("      case " + state + "\n        switch \"$word\"\n")
+  for opt in options {
+    sb.write_string("          case '--" + escape_single_quote(opt.name) + "'")
+    if has_short(opt) {
+      sb.write_string(" '-" + escape_single_quote(opt.short.to_string()) + "'")
+    }
+    sb.write_string("\n")
+    if opt.type_ != BoolOpt {
+      sb.write_string("            set skip 1\n")
+      sb.write_string(
+        "          case '--" + escape_single_quote(opt.name) + "=*'\n",
+      )
+    }
+  }
+  for i, cmd in commands {
+    sb.write_string("          case '" + escape_single_quote(cmd.name) + "'\n")
+    sb.write_string(
+      "            set state " + state + "_c" + i.to_string() + "\n",
+    )
+  }
+  if options.any(fn(opt) { has_short(opt) }) {
+    sb.write_string(
+      (
+        #|          case '-*'
+        #|            set -l rest (string sub -s 2 -- "$word")
+        #|            while test -n "$rest"
+        #|              set -l short (string sub -l 1 -- "$rest")
+        #|              set rest (string sub -s 2 -- "$rest")
+        #|              switch "$short"
+        #|
+      ),
+    )
+    for opt in options {
+      if has_short(opt) {
+        sb.write_string(
+          "                case '" +
+          escape_single_quote(opt.short.to_string()) +
+          "'\n",
+        )
+        if opt.type_ != BoolOpt {
+          sb.write_string(
+            (
+              #|                  if test -z "$rest"
+              #|                    set skip 1
+              #|                  end
+              #|                  break
+              #|
+            ),
+          )
+        }
+      }
+    }
+    sb.write_string(
+      "                case '*'\n                  break\n              end\n            end\n",
+    )
+  }
+  sb.write_string("        end\n")
+  for i, cmd in commands {
+    render_fish_states(
+      sb,
+      state + "_c" + i.to_string(),
+      cmd.options,
+      cmd.subcommands,
+    )
+  }
+}
+
+///|
+fn render_fish_node(
+  sb : StringBuilder,
+  app_name : String,
+  context_fn : String,
+  state : String,
+  options : Array[OptionDef],
+  commands : Array[CommandDef],
+) -> Unit {
+  let condition = "-n '" + context_fn + " " + state + "'"
+  render_fish_options(sb, app_name, condition, options)
+  for i, cmd in commands {
     let desc = escape_single_quote(cmd.description)
     let line = "complete -c " +
       app_name +
       " " +
       condition +
       " -a " +
-      cmd.name +
+      "'" +
+      escape_single_quote(cmd.name) +
+      "'" +
       " -d '" +
       desc +
       "'"
     sb.write_string(line + "\n")
-    let sub_cond = "-n '__fish_seen_subcommand_from " + cmd.name + "'"
-    render_fish_options(sb, app_name, sub_cond, cmd.options)
-    render_fish_subcommands(sb, app_name, sub_cond, cmd.subcommands)
+    render_fish_node(
+      sb,
+      app_name,
+      context_fn,
+      state + "_c" + i.to_string(),
+      cmd.options,
+      cmd.subcommands,
+    )
   }
 }
 
@@ -335,24 +453,42 @@ fn render_fish_subcommands(
 pub fn CliApp::render_fish_completion(self : CliApp) -> String {
   let sb = StringBuilder()
   sb.write_string("# Fish completions for " + self.name + "\n")
-  let root_cond = "-n '__fish_use_subcommand'"
-  for cmd in self.commands {
-    let desc = escape_single_quote(cmd.description)
-    let line = "complete -c " +
-      self.name +
-      " " +
-      root_cond +
-      " -a " +
-      cmd.name +
-      " -d '" +
-      desc +
-      "'"
-    sb.write_string(line + "\n")
-  }
-  for cmd in self.commands {
-    let cond = "-n '__fish_seen_subcommand_from " + cmd.name + "'"
-    render_fish_options(sb, self.name, cond, cmd.options)
-    render_fish_subcommands(sb, self.name, cond, cmd.subcommands)
-  }
+  let context_fn = "__" + self.name.replace(old="-", new="_") + "_context"
+  sb.write_string("function " + context_fn + "\n")
+  sb.write_string(
+    (
+      #|  set -l words (commandline -opc)
+      #|  set -l state root
+      #|  set -l skip 0
+      #|  for word in $words[2..-1]
+      #|    if test $skip -eq 1
+      #|      set skip 0
+      #|      continue
+      #|    end
+      #|    if test "$word" = --
+      #|      return 1
+      #|    end
+      #|    switch $state
+      #|
+    ),
+  )
+  render_fish_states(sb, "root", self.root_options, self.commands)
+  sb.write_string(
+    (
+      #|    end
+      #|  end
+      #|  test $skip -eq 0; and test "$state" = "$argv[1]"
+      #|end
+      #|
+    ),
+  )
+  render_fish_node(
+    sb,
+    self.name,
+    context_fn,
+    "root",
+    self.root_options,
+    self.commands,
+  )
   sb.to_string()
 }

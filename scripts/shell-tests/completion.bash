@@ -1,0 +1,42 @@
+# Bash code is the test subject; orchestration lives in check-completions.nu.
+source "$CMDER_COMPLETION_FILE"
+checks=0
+check() {
+  local expected=$1
+  shift
+  COMP_WORDS=(cmder-test "$@")
+  COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+  COMP_LINE=${test_line:-"${COMP_WORDS[*]}"}
+  COMP_POINT=${cursor_point:-${#COMP_LINE}}
+  COMPREPLY=(stale)
+  _cmder_test cmder-test "${cursor_word-${COMP_WORDS[COMP_CWORD]}}"
+  local actual="${COMPREPLY[*]}"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'Bash: %s: expected <%s>, got <%s>\n' "$*" "$expected" "$actual" >&2
+    exit 1
+  fi
+  checks=$((checks + 1))
+}
+check '--verbose' --v
+check '--profile' --p
+check '--db-only' db inspect --db
+cursor_word=--db cursor_point=26 test_line='cmder-test db inspect --dbZ' check '--db-only' db inspect --dbZ
+check '--cache-only' cache inspect --cache
+check '' db inspect --cache
+check '' cache inspect --db
+check '--db-only' --profile cache db inspect --db
+check '--db-only' --profile=cache db inspect --db
+test_line='cmder-test --profile=cache db inspect --db' check '--db-only' --profile = cache db inspect --db
+test_line='cmder-test --profile=cache ' check 'db cache files --verbose -v --profile -p' --profile = cache ''
+test_line='cmder-test --profile=cache:db db inspect --db' check '--db-only' --profile = cache : db db inspect --db
+check '--db-only' --profile = db inspect --db
+check '--db-only' --profile "'cache db'" db inspect --db
+check '--db-only' -vp cache db inspect --db
+check '--db-only' -vpcache db inspect --db
+check '--db-only' db --region cache inspect --db
+check '' --profile ''
+check '' db inspect --format ''
+check '' files -- --f
+check '' -- db inspect --db
+check '' db -- inspect --db
+printf 'Bash: %s behavior checks passed\n' "$checks"

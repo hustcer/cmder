@@ -131,3 +131,48 @@ test "callbacks receive ancestor options and closest values win" {
   inspect(verbose.val, content="false")
   inspect(mode.val, content="root")
 }
+
+///|
+test "integer options accept negative values through the full execution path" {
+  for
+    opt in [
+      @cmder.int("delta"),
+      @cmder.int("delta", required=true),
+      @cmder.int("delta", default=Some(1)),
+      @cmder.int("delta", short='d'),
+      @cmder.int("delta", short='d', required=true),
+      @cmder.int("delta", short='d', default=Some(1)),
+    ] {
+    let captured = Ref(0)
+    let app = @cmder.cli(name="app", commands=[
+      @cmder.command(
+        name="go",
+        options=[opt],
+        run=Some(fn(ctx) { captured.val = ctx.get_int("delta").unwrap_or(0) }),
+      ),
+    ])
+    app.run(argv=Some(["go", "--delta", "-2147483648"]))
+    assert_eq(captured.val, -2147483648)
+    app.run(argv=Some(["go", "--delta=-2"]))
+    assert_eq(captured.val, -2)
+    if opt.short == 'd' {
+      app.run(argv=Some(["go", "-d", "-3"]))
+      assert_eq(captured.val, -3)
+    }
+  }
+}
+
+///|
+test "negative root options reach nested callbacks" {
+  let captured = Ref(0)
+  let app = @cmder.cli(name="app", options=[@cmder.int("delta", short='d')], commands=[
+    @cmder.command(name="db", subcommands=[
+      @cmder.command(
+        name="up",
+        run=Some(fn(ctx) { captured.val = ctx.get_int("delta").unwrap_or(0) }),
+      ),
+    ]),
+  ])
+  app.run(argv=Some(["-d", "-1", "db", "up"]))
+  assert_eq(captured.val, -1)
+}

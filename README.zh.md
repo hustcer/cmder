@@ -113,6 +113,8 @@ let options = [
 
 整数选项在解析阶段仍按字符串接收。`get_int` 在缺失、格式错误或超出 `Int32` 范围时返回 `None`；需要拒绝无效输入时使用 `get_int_required` 并处理错误。正数、范围等业务约束由应用自行校验。
 
+负整数支持分离形式（`--delta -1`、`-d -1`）和连接形式（`--delta=-1`）。
+
 位置参数放在 `positionals` 中，必填参数应排在可选参数之前。除最后一个外，每个位置参数最多接收一个值；最后一个接收剩余值：
 
 ```moonbit
@@ -207,6 +209,8 @@ let schema_json = app.render_schema_json()  // Json
 
 导出内容描述命令层级、选项类型、必填状态、默认值、位置参数和示例，适合生成文档或供工具读取。这里的 schema 是本库的 CLI 描述格式，不代表标准 JSON Schema；选项默认值以字符串表示，包括整数默认值。
 
+`positionals` 保留按参数名称索引的对象结构。每项包含从 0 开始的 `index`、`min_args`（0 或 1）和 `max_args`（1；最后一个无上限参数为 `null`）。消费者应按 `index` 排序，不依赖 JSON 对象键的顺序。
+
 库不会自动注册 `--schema`。仓库中的[示例程序](src/examples/cli/main.mbt) 在调用 `run` 前检查最后一个参数是否为 `--schema`，再输出定义。
 
 ## Shell 补全
@@ -222,6 +226,8 @@ let fish_script = app.render_fish_completion()
 应用需要自行提供脚本导出入口，或在构建流程中将这些字符串写入文件。库不会自动添加 `completion` 子命令。建议先构造完整的 `app`，再处理导出请求，避免在初始化 `app` 的回调中引用尚未定义的 `app`。
 
 对于名为 `myapp` 的程序，将生成的脚本分别保存后，可在对应 shell 中加载：
+
+Bash 脚本使用内置补全变量，无需安装 `bash-completion`。补全遵循声明的命令路径与选项作用域；遇到 `--` 后停止建议命令和选项。本库不生成自定义参数值或位置参数文件名补全。
 
 ```bash
 # Bash
@@ -267,6 +273,8 @@ moon run src/examples/cli --target native -- --schema
 ```
 
 按目标验证时可使用 `moon test --target native`、`moon test --target js` 和 `moon test --target wasm-gc`。运行 JS 目标需要对应的 JavaScript 运行时。
+
+运行 `nu scripts/check-completions.nu` 可执行 shell 集成回归测试（需要 Nushell 0.116+、Bash、Fish 和 Zsh）。测试在干净 shell 中执行生成脚本；Zsh 在非交互 ZLE 环境下捕获补全组件调用。CI 在 native 目标运行此套件。
 
 ## 致谢与许可证
 

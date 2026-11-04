@@ -153,3 +153,46 @@ test "generated nested example includes required ancestor arguments" {
   )
   app.run(argv=Some(["--profile", "p", "db", "--region", "r", "up", "1"]))
 }
+
+///|
+test "schema preserves positional order and cardinality" {
+  let schema = @cmder.cli(name="app", commands=[
+    @cmder.command(name="copy", positionals=[
+      @cmder.positional("source", required=true),
+      @cmder.positional("destination"),
+    ]),
+  ]).render_schema_json()
+  match schema {
+    { "commands": { "copy": { "positionals": positionals, .. }, .. }, .. } =>
+      json_inspect(positionals, content={
+        "source": {
+          "description": "",
+          "required": true,
+          "index": 0,
+          "min_args": 1,
+          "max_args": 1,
+        },
+        "destination": {
+          "description": "",
+          "required": false,
+          "index": 1,
+          "min_args": 0,
+          "max_args": null,
+        },
+      })
+    _ => fail("missing positional definitions")
+  }
+  let forward = @cmder.cli(name="app", commands=[
+    @cmder.command(name="copy", positionals=[
+      @cmder.positional("alpha"),
+      @cmder.positional("omega"),
+    ]),
+  ]).render_schema_json()
+  let reversed = @cmder.cli(name="app", commands=[
+    @cmder.command(name="copy", positionals=[
+      @cmder.positional("omega"),
+      @cmder.positional("alpha"),
+    ]),
+  ]).render_schema_json()
+  assert_false(forward == reversed)
+}

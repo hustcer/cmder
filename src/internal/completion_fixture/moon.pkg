@@ -1,0 +1,6 @@
+import {
+  "hustcer/cmder",
+  "moonbitlang/core/env",
+}
+
+pkgtype(kind: "executable")

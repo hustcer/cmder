@@ -14,26 +14,19 @@ fn build_option_to_flag(opt : OptionDef) -> @argparse.FlagArg {
 
 ///|
 fn build_option_to_option_arg(opt : OptionDef) -> @argparse.OptionArg {
-  match (has_short(opt), opt.default_value, opt.required) {
-    (true, Some(dv), _) =>
-      @argparse.OptionArg(opt.name, short=opt.short, about=opt.description, default_values=[
-        dv,
-      ])
-    (true, None, true) =>
-      @argparse.OptionArg(
-        opt.name,
-        short=opt.short,
-        about=opt.description,
-        required=true,
-      )
-    (true, None, false) =>
-      @argparse.OptionArg(opt.name, short=opt.short, about=opt.description)
-    (false, Some(dv), _) =>
-      @argparse.OptionArg(opt.name, about=opt.description, default_values=[dv])
-    (false, None, true) =>
-      @argparse.OptionArg(opt.name, about=opt.description, required=true)
-    (false, None, false) => @argparse.OptionArg(opt.name, about=opt.description)
+  let short = if has_short(opt) { Some(opt.short) } else { None }
+  let default_values = match opt.default_value {
+    Some(value) => [value]
+    None => []
   }
+  @argparse.OptionArg(
+    opt.name,
+    short?,
+    about=opt.description,
+    default_values~,
+    required=opt.required && opt.default_value is None,
+    allow_hyphen_values=opt.type_ == IntOpt,
+  )
 }
 
 ///|

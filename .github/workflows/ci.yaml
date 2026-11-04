@@ -26,3 +26,14 @@ jobs:
         run: moon check --deny-warn --target ${{ matrix.target }}
       - name: Moon test
         run: moon test --target ${{ matrix.target }}
+      - name: Install completion test shells
+        if: matrix.target == 'native'
+        run: sudo apt-get update && sudo apt-get install -y fish zsh
+      - name: Install Nushell
+        if: matrix.target == 'native'
+        uses: hustcer/setup-nu@v3
+        with:
+          version: '0.116.0'
+      - name: Test generated completions
+        if: matrix.target == 'native'
+        run: nu scripts/check-completions.nu

@@ -27,10 +27,17 @@ fn option_def_to_json(opt : OptionDef) -> Json {
 }
 
 ///|
-fn positional_def_to_json(pos : PositionalDef) -> Json {
+fn positional_def_to_json(
+  pos : PositionalDef,
+  index : Int32,
+  last : Bool,
+) -> Json {
   let m : Map[String, Json] = Map([])
   m["description"] = ToJson::to_json(pos.description)
   m["required"] = ToJson::to_json(pos.required)
+  m["index"] = ToJson::to_json(index)
+  m["min_args"] = ToJson::to_json(if pos.required { 1 } else { 0 })
+  m["max_args"] = if last { Json::null() } else { ToJson::to_json(1) }
   Json::object(m)
 }
 
@@ -67,8 +74,12 @@ fn command_def_to_json(cmd : CommandDef, cmd_path : String) -> Json {
   }
   if cmd.positionals.length() > 0 {
     let poss : Map[String, Json] = Map([])
-    for pos in cmd.positionals {
-      poss[pos.name] = positional_def_to_json(pos)
+    for i, pos in cmd.positionals {
+      poss[pos.name] = positional_def_to_json(
+        pos,
+        i,
+        i == cmd.positionals.length() - 1,
+      )
     }
     m["positionals"] = Json::object(poss)
   }
