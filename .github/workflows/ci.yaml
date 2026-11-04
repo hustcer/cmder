@@ -8,18 +8,17 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         target: [js, native, wasm-gc]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install MoonBit CLI
-        run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
-          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+        uses: hustcer/setup-moonbit@v1
       - name: Moon update
         run: moon update
       - name: Moon check
@@ -27,13 +26,13 @@ jobs:
       - name: Moon test
         run: moon test --target ${{ matrix.target }}
       - name: Install completion test shells
-        if: matrix.target == 'native'
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: sudo apt-get update && sudo apt-get install -y fish zsh
       - name: Install Nushell
-        if: matrix.target == 'native'
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         uses: hustcer/setup-nu@v3
         with:
           version: '0.116.0'
       - name: Test generated completions
-        if: matrix.target == 'native'
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: nu scripts/check-completions.nu
