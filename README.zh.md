@@ -111,7 +111,13 @@ let options = [
 
 `short` 可以省略。`string` 和 `int` 支持 `required=true`；配置默认值后，即使同时设置 `required=true`，调用者也可以省略该选项。
 
-整数选项在解析阶段仍按字符串接收。`get_int` 在缺失、格式错误或超出 `Int32` 范围时返回 `None`；需要拒绝无效输入时使用 `get_int_required` 并处理错误。正数、范围等业务约束由应用自行校验。
+公开的 `OptionDef` 记录字面量也遵循同样的规则：帮助、schema 的 `required` 字段及自动示例
+均反映参数是否实际必须提供。Boolean 开关始终可省略，默认为 false；记录中的 `required`
+和 `default_value` 字段被忽略，schema 也不会为开关输出值默认值。
+
+整数选项默认在解析阶段按字符串接收。可选整数使用 `get_int_checked`，必填整数使用
+`get_int_required`，以区分缺失和非法输入。需要在执行前验证全部已解析整数选项时，
+可以在 `parse` 或 `run` 上显式启用 `validate_types=true`。正数、范围等业务约束仍由应用自行校验。
 
 负整数支持分离形式（`--delta -1`、`-d -1`）和连接形式（`--delta=-1`）。
 
@@ -220,12 +226,47 @@ match app.parse(argv=["go", "--count", "3"]) {
 不会隐式访问进程环境。
 
 `run()` 继续作为便利入口：可读取进程参数、执行回调，并在帮助或版本请求时打印后成功退出。
-需要自行控制输出、执行及退出状态的宿主应使用 `parse`。既有公开结构体字段及
-`run`、`get_int` 签名保持不变。
+需要自行控制输出、执行及退出状态的宿主应使用 `parse`。既有公开结构体字段、默认解析行为
+及原有调用方式保持兼容。
 
 只需要帮助文本时，使用 `app.render_help()` 或
 `app.render_help(command_path=["db", "migrate"])`。它不解析参数或执行回调，会显示显式声明
 的命令示例；未知路径抛出 `CliError::UnknownCommand(path)`。
+
+## 显式调度与类型校验
+
+解析完成并执行宿主自身的检查后，使用 `app.dispatch(call)` 调用选中命令的回调，无需重新解析。
+它直接传入 invocation 当前的 context，只执行选中命令的回调，不依次执行祖先回调。
+缺失命令、子命令、处理器及未知路径会抛出与 `run` 一致的类型化错误。
+调度层不执行帮助或版本输出，也不退出进程；回调仍可执行其自身的副作用。
+每次调用都会再次执行。调度根据当前应用定义解析命令路径，调用方应使用兼容的定义；
+它不认证 invocation 的来源，也不重新校验编辑后的 context。
+
+```moonbit
+let app = @cmder.cli(name="app", commands=[
+  @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))],
+    run=Some(fn(ctx) {
+      let count = ctx.get_int_checked("count") catch {
+        err => { println(err.message()); return }
+      }
+      println(count.unwrap_or(1))
+    })),
+])
+match app.parse(argv=["go", "--count", "2"], validate_types=true) {
+  Parsed(call) => app.dispatch(call) catch { err => println(err.message()) }
+  Help(text) | Version(text) => println(text)
+  Failed(error) => println(error.message())
+}
+```
+
+`parse` 或 `run` 的 `validate_types=true` 按 `get_int_checked` 的相同规则和错误类型，
+检查十进制 `Int32` 的整数格式与溢出。在继承值合并前，每个选中命令层级的值和默认值
+都按该层自身的定义校验。即使后代会覆盖某个祖先值，非法的祖先值仍会被拒绝；
+缺失的子级选项不会将继承的字符串重新解释成整数。未选中的分支不进行类型校验。
+
+帮助、版本及结构性解析失败保持原有优先级。类型校验不执行回调，`run` 只在解析和校验
+成功后调度。原始字符串、argv 和来源快照保持不变。读取整数时仍应使用 checked getter：
+旧 `get_int` 的位数限制仍会影响带大量前导零的整数。业务范围和参数关系仍由调用方负责。
 
 ## 显式传入参数与测试
 
@@ -304,8 +345,9 @@ source ./myapp.fish
 | `cli(name=..., version=..., description=..., options=..., commands=...)`                                   | 构建应用                                                          |
 | `command(name=..., description=..., options=..., positionals=..., examples=..., subcommands=..., run=...)` | 定义命令                                                          |
 | `string`、`int`、`bool`、`positional`                                                                      | 定义参数                                                          |
-| `CliApp::run(argv=...)`                                                                                    | 解析参数并执行回调                                                |
-| `CliApp::parse(argv=...)`                                                                                  | 无 I/O、执行或退出副作用的解析结果                                |
+| `CliApp::run(argv=..., validate_types=...)`                                                                | 解析并调度，可选整数类型校验                                      |
+| `CliApp::parse(argv=..., validate_types=...)`                                                              | 无 I/O 或执行副作用的解析结果，可选类型校验                       |
+| `CliApp::dispatch(invocation)`                                                                             | 根据当前命令定义执行解析结果                                      |
 | `CliApp::render_help(command_path=...)`                                                                    | 渲染根命令或子命令帮助及显式示例                                  |
 | `Invocation::source_of` / `was_provided`                                                                   | 查询有效参数的来源                                                |
 | `CliApp::render_schema` / `render_schema_json`                                                             | 导出 CLI 定义                                                     |

@@ -25,6 +25,10 @@ pub impl Show for OptionType with fn output(self, logger) {
 }
 
 ///|
+/// Option metadata shared by parsing, help, schema, and completion. For string
+/// and integer options, a default permits omission even when required is true.
+/// Boolean flags are always optional and default to false; their required and
+/// default_value fields are ignored, including in public record literals.
 #derive(Debug)
 pub(all) struct OptionDef {
   name : String

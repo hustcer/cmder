@@ -48,14 +48,15 @@ pub(all) struct CliApp {
   root_options : Array[OptionDef]
   commands : Array[CommandDef]
 }
-pub fn CliApp::parse(Self, argv~ : ArrayView[String]) -> ParseOutcome
+pub fn CliApp::dispatch(Self, Invocation) -> Unit raise CliError
+pub fn CliApp::parse(Self, argv~ : ArrayView[String], validate_types? : Bool) -> ParseOutcome
 pub fn CliApp::render_bash_completion(Self) -> String
 pub fn CliApp::render_fish_completion(Self) -> String
 pub fn CliApp::render_help(Self, command_path? : ArrayView[String]) -> String raise CliError
 pub fn CliApp::render_schema(Self) -> String
 pub fn CliApp::render_schema_json(Self) -> @json.Json
 pub fn CliApp::render_zsh_completion(Self) -> String
-pub fn CliApp::run(Self, argv? : Array[String]?) -> Unit raise
+pub fn CliApp::run(Self, argv? : Array[String]?, validate_types? : Bool) -> Unit raise
 
 pub(all) struct CommandDef {
   name : String

@@ -108,6 +108,13 @@ fn invocation_from_matches(matches : @argparse.Matches) -> Invocation {
 /// Parses explicit argv, excluding the executable name, without printing,
 /// exiting, reading process state, or invoking callbacks. Integer conversion
 /// remains lazy; use get_int_checked to distinguish invalid values from absence.
+/// With validate_types=true, check integer syntax and Int32 overflow at each
+/// selected command scope before inheritance, including defaults and values
+/// later shadowed by descendants. Unselected commands are not checked. Help and
+/// version retain parser precedence and bypass type validation. No application
+/// ranges are imposed. Raw strings and provenance are preserved; legacy get_int
+/// still has its digit-length cap. Validation is a parse-time check, not a
+/// guarantee about a context the caller subsequently mutates.
 ///
 /// ```mbt check
 /// test {
@@ -117,13 +124,62 @@ fn invocation_from_matches(matches : @argparse.Matches) -> Invocation {
 ///   }
 ///   inspect(version, content="1.2.3")
 /// }
+///
+/// test {
+///   let app = @cmder.cli(name="app", options=[@cmder.int("count")])
+///   assert_true(app.parse(argv=["--count", "bad"]) is Parsed(_))
+///   assert_true(
+///     app.parse(argv=["--count", "bad"], validate_types=true)
+///     is Failed(@cmder.CliError::InvalidInteger("count", "bad")),
+///   )
+/// }
 /// ```
-pub fn CliApp::parse(self : CliApp, argv~ : ArrayView[String]) -> ParseOutcome {
+pub fn CliApp::parse(
+  self : CliApp,
+  argv~ : ArrayView[String],
+  validate_types~ : Bool = false,
+) -> ParseOutcome {
   match build_cli_command(self).parse_outcome(argv~) {
-    Parsed(matches) => Parsed(invocation_from_matches(matches))
+    Parsed(matches) => {
+      if validate_types {
+        validate_match_types(self, matches) catch {
+          error => return Failed(error)
+        }
+      }
+      Parsed(invocation_from_matches(matches))
+    }
     Help(text) => Help(text)
     Version(text) => Version(text)
     Failed(error) => Failed(CliError::ParseError(error.to_string()))
+  }
+}
+
+///|
+// Validate each value against its owning scope, before same-name values merge.
+fn validate_match_types(
+  app : CliApp,
+  matches : @argparse.Matches,
+) -> Unit raise CliError {
+  let mut options = app.root_options
+  let mut commands = app.commands
+  let mut current = matches
+  let path : Array[String] = []
+  while true {
+    for option in options {
+      if option.type_ == IntOpt {
+        for value in current.values.get(option.name).unwrap_or([]) {
+          ignore(parse_integer_value(option.name, value))
+        }
+      }
+    }
+    guard current.subcommand is Some((name, child)) else { break }
+    path.push(name)
+    guard find_command_def(commands, name) is Some(command) else {
+      raise CliError::UnknownCommand(path)
+    }
+    options = command.options
+    commands = command.subcommands
+    current = child
   }
 }
 

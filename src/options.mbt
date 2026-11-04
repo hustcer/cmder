@@ -3,6 +3,12 @@
 let no_short : Char = '\u0000'
 
 ///|
+// Parser, schema, and examples must agree even for public record literals.
+fn option_is_required(opt : OptionDef) -> Bool {
+  opt.type_ != BoolOpt && opt.required && opt.default_value is None
+}
+
+///|
 /// Defines a string-valued option.
 ///
 /// ```mbt check

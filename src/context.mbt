@@ -126,6 +126,12 @@ pub fn Context::get_int_checked(
   name : String,
 ) -> Int32? raise CliError {
   guard self.get_string(name) is Some(value) else { return None }
+  Some(parse_integer_value(name, value))
+}
+
+///|
+// Shared by checked getters and opt-in parse-time type validation.
+fn parse_integer_value(name : String, value : String) -> Int32 raise CliError {
   let negative = value.has_prefix("-")
   let start = if negative { 1 } else { 0 }
   if start == value.length() {
@@ -146,7 +152,7 @@ pub fn Context::get_int_checked(
     }
     magnitude = magnitude * 10L + digit
   }
-  Some((if negative { -magnitude } else { magnitude }).to_int())
+  (if negative { -magnitude } else { magnitude }).to_int()
 }
 
 ///|

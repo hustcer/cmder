@@ -24,7 +24,7 @@ fn build_option_to_option_arg(opt : OptionDef) -> @argparse.OptionArg {
     short?,
     about=opt.description,
     default_values~,
-    required=opt.required && opt.default_value is None,
+    required=option_is_required(opt),
     allow_hyphen_values=opt.type_ == IntOpt,
   )
 }

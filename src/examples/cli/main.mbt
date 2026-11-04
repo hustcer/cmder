@@ -29,7 +29,13 @@ fn main {
         run=Some(fn(ctx) {
           let name = ctx.get_string_required("name") catch { _ => return }
           let loud = ctx.get_bool("loud")
-          let count = ctx.get_int("count").unwrap_or(1)
+          let count = ctx.get_int_checked("count") catch {
+            err => {
+              println(err.message())
+              return
+            }
+          }
+          let count = count.unwrap_or(1)
           for _ in 0..<count {
             let msg = "Hello, \{name}!"
             if loud {
@@ -58,7 +64,12 @@ fn main {
             ],
             run=Some(fn(ctx) {
               let dry = ctx.get_bool("dry-run")
-              let steps = ctx.get_int("steps")
+              let steps = ctx.get_int_checked("steps") catch {
+                err => {
+                  println(err.message())
+                  return
+                }
+              }
               if dry {
                 println("[DRY RUN] Would apply migrations")
               } else {
@@ -82,7 +93,13 @@ fn main {
               ),
             ],
             run=Some(fn(ctx) {
-              let steps = ctx.get_int("steps").unwrap_or(1)
+              let steps = ctx.get_int_checked("steps") catch {
+                err => {
+                  println(err.message())
+                  return
+                }
+              }
+              let steps = steps.unwrap_or(1)
               println("Rolling back \{steps} migration(s)...")
               println("Done.")
             }),
@@ -113,7 +130,7 @@ fn main {
     println(app.render_schema())
     return
   }
-  app.run() catch {
+  app.run(validate_types=true) catch {
     err => println(err)
   }
 }

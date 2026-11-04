@@ -83,14 +83,37 @@ fn inherit_context(parent : Context, child : Context) -> Context {
 }
 
 ///|
-fn execute_command(
-  app : CliApp,
+/// Executes only the selected command's callback using the invocation's current
+/// context. This method does not parse arguments, validate types, or perform
+/// help/version I/O; callbacks retain their own effects. Resolve the path against
+/// this application's current definitions, not a definition snapshot. The caller
+/// is responsible for pairing the invocation with compatible definitions.
+/// Empty roots, unknown paths, missing subcommands, and missing handlers raise
+/// the corresponding CliError before any callback executes. Repeated calls
+/// deliberately execute the callback again.
+///
+/// ```mbt check
+/// test {
+///   let called = Ref(false)
+///   let app = @cmder.cli(name="demo", commands=[
+///     @cmder.command(name="go", run=Some(fn(_) { called.val = true })),
+///   ])
+///   guard app.parse(argv=["go"]) is Parsed(call) else {
+///     fail("expected arguments")
+///   }
+///   assert_false(called.val)
+///   app.dispatch(call)
+///   assert_true(called.val)
+/// }
+/// ```
+pub fn CliApp::dispatch(
+  self : CliApp,
   invocation : Invocation,
 ) -> Unit raise CliError {
   if invocation.command_path.is_empty() {
     raise CliError::MissingCommand
   }
-  guard find_command_path(app.commands, invocation.command_path) is Some(cmd) else {
+  guard find_command_path(self.commands, invocation.command_path) is Some(cmd) else {
     raise CliError::UnknownCommand(invocation.command_path)
   }
   match cmd.run {
@@ -132,6 +155,8 @@ fn process_argv() -> ArrayView[String] {
 /// handling. Callback signatures and closest-value precedence are unchanged.
 /// Parse failures raise CliError::ParseError with the original diagnostic;
 /// missing command, subcommand, or callback errors have distinct CliError cases.
+/// Set validate_types=true for the same opt-in integer validation as parse;
+/// invalid values raise their typed CliError before any callback executes.
 ///
 /// ```mbt check
 /// test {
@@ -143,13 +168,17 @@ fn process_argv() -> ArrayView[String] {
 ///   assert_true(called.val)
 /// }
 /// ```
-pub fn CliApp::run(self : CliApp, argv~ : Array[String]? = None) -> Unit raise {
+pub fn CliApp::run(
+  self : CliApp,
+  argv~ : Array[String]? = None,
+  validate_types~ : Bool = false,
+) -> Unit raise {
   let args = match argv {
     Some(args) => args[:]
     None => process_argv()
   }
-  match self.parse(argv=args) {
-    Parsed(invocation) => execute_command(self, invocation)
+  match self.parse(argv=args, validate_types~) {
+    Parsed(invocation) => self.dispatch(invocation)
     Help(text) | Version(text) => {
       println(text)
       @env.exit(0)

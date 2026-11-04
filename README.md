@@ -111,7 +111,16 @@ let options = [
 
 `short` is optional. `string` and `int` support `required=true`. When a default value is configured, callers can omit the option even if `required=true` is also set.
 
-Integer options are still accepted as strings during argument parsing. `get_int` returns `None` for missing values, invalid formats, or values outside the `Int32` range. To reject invalid input, use `get_int_required` and handle the error. Applications must enforce their own constraints, such as positive values or allowed ranges.
+The same rule applies to public `OptionDef` record literals: help, schema `required`
+markers, and generated examples all describe whether an option must actually be
+supplied. Boolean flags are always optional and default to false; their raw
+`required` and `default_value` fields are ignored and the schema omits a value default.
+
+Integer options are accepted as strings during argument parsing by default. Use
+`get_int_checked` for optional integers and `get_int_required` for required ones;
+these distinguish invalid input from absence. To validate all parsed integer options
+before execution, opt in with `validate_types=true` on `parse` or `run`. Applications
+must enforce their own constraints, such as positive values or allowed ranges.
 
 Negative integer values work in both separated (`--delta -1`, `-d -1`) and attached (`--delta=-1`) forms.
 
@@ -226,12 +235,53 @@ and `Default`; `Env` preserves the underlying source model without implicit envi
 `run()` remains the convenience API: it optionally reads process arguments, executes
 callbacks, and prints and exits successfully for help/version. Use `parse` when the
 host must retain control over output, execution, and exit status. Existing public
-record fields and `run`/`get_int` signatures remain unchanged.
+record fields, default parsing behavior, and call styles remain compatible.
 
 For help text alone, use `app.render_help()` or
 `app.render_help(command_path=["db", "migrate"])`. This performs no argument parsing
 or callback execution, includes explicit command examples, and raises
 `CliError::UnknownCommand(path)` for an unknown path.
+
+## Explicit Dispatch and Type Validation
+
+After parsing and any host-specific checks, use `app.dispatch(call)` to execute the
+selected callback without parsing again. It passes the invocation's current context
+unchanged and invokes only the selected callback, not its ancestors. Missing commands,
+subcommands, handlers, and unknown paths raise the same typed errors as `run`.
+The dispatch layer performs no help/version I/O or process exit; callbacks retain
+their own effects. Each call executes again. Dispatch resolves the path against the
+current application definitions, so callers must pair invocations with compatible
+definitions; it does not certify their origin or revalidate edited contexts.
+
+```moonbit
+let app = @cmder.cli(name="app", commands=[
+  @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))],
+    run=Some(fn(ctx) {
+      let count = ctx.get_int_checked("count") catch {
+        err => { println(err.message()); return }
+      }
+      println(count.unwrap_or(1))
+    })),
+])
+match app.parse(argv=["go", "--count", "2"], validate_types=true) {
+  Parsed(call) => app.dispatch(call) catch { err => println(err.message()) }
+  Help(text) | Version(text) => println(text)
+  Failed(error) => println(error.message())
+}
+```
+
+`validate_types=true` on `parse` or `run` checks signed decimal `Int32` syntax and
+overflow, using the same rules and errors as `get_int_checked`. It validates values
+and defaults at each selected command level against that level's own definitions,
+before inheritance merges same-name values. Invalid ancestor values are rejected even
+when a descendant would shadow them. An absent child option does not reinterpret an
+inherited string as an integer. Unselected branches are not type-checked.
+
+Help, version, and structural parser failures keep their existing precedence. Type
+validation never invokes callbacks; `run` dispatches only after successful parsing
+and validation. Original strings, argv, and source snapshots are preserved. Continue
+using checked integer getters: the legacy `get_int` digit-length cap still applies
+to padded integers. Product ranges and relationships remain the caller's concern.
 
 ## Explicit Arguments and Testing
 
@@ -310,8 +360,9 @@ source ./myapp.fish
 | `cli(name=..., version=..., description=..., options=..., commands=...)`                                   | Build an application                                                     |
 | `command(name=..., description=..., options=..., positionals=..., examples=..., subcommands=..., run=...)` | Define a command                                                         |
 | `string`, `int`, `bool`, `positional`                                                                      | Define arguments                                                         |
-| `CliApp::run(argv=...)`                                                                                    | Parse arguments and execute the callback                                 |
-| `CliApp::parse(argv=...)`                                                                                  | Return `Parsed`, `Help`, `Version`, or `Failed` without I/O or execution |
+| `CliApp::run(argv=..., validate_types=...)`                                                                | Parse and dispatch, optionally validating integer types                  |
+| `CliApp::parse(argv=..., validate_types=...)`                                                              | Return an outcome without I/O or execution; optional type validation     |
+| `CliApp::dispatch(invocation)`                                                                             | Execute a parsed invocation through the current command definitions      |
 | `CliApp::render_help(command_path=...)`                                                                    | Render root or nested help, including explicit examples                  |
 | `Invocation::source_of` / `was_provided`                                                                   | Query effective argument provenance                                      |
 | `CliApp::render_schema` / `render_schema_json`                                                             | Export CLI definitions                                                   |

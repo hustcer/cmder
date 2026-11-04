@@ -12,16 +12,18 @@ fn option_def_to_json(opt : OptionDef) -> Json {
   let m : Map[String, Json] = Map([])
   m["type"] = ToJson::to_json(option_type_to_string(opt.type_))
   m["description"] = ToJson::to_json(opt.description)
-  m["required"] = ToJson::to_json(opt.required)
+  m["required"] = ToJson::to_json(option_is_required(opt))
   if opt.type_ == BoolOpt {
     m["style"] = ToJson::to_json("flag")
   }
   if opt.short != no_short {
     m["short"] = ToJson::to_json(opt.short.to_string())
   }
-  match opt.default_value {
-    Some(v) => m["default"] = ToJson::to_json(v)
-    None => ()
+  if opt.type_ != BoolOpt {
+    match opt.default_value {
+      Some(v) => m["default"] = ToJson::to_json(v)
+      None => ()
+    }
   }
   Json::object(m)
 }
@@ -49,7 +51,7 @@ fn generate_example(
 ) -> String {
   let parts : Array[String] = [cmd_path]
   for opt in options {
-    if opt.required {
+    if option_is_required(opt) {
       parts.push("--" + opt.name + " <" + opt.name + ">")
     }
   }
@@ -103,7 +105,9 @@ fn command_def_to_json(cmd : CommandDef, cmd_path : String) -> Json {
 }
 
 ///|
-/// Returns a structured JSON description of the application.
+/// Returns a structured JSON description of the application. Required markers
+/// and generated examples follow parser semantics: string/integer defaults make
+/// an option optional, and Boolean flags ignore required/default_value fields.
 ///
 /// ```mbt check
 /// test {
