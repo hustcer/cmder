@@ -2,13 +2,17 @@ source "$CMDER_COMPLETION_FILE"
 set -g checks 0
 function check
     set -l expected $argv[1]
-    set -l actual (complete -C "$argv[2]" | string replace -r '\t.*$' '' | string match -- '--*' | sort | string join ' ')
+    # Fish 4.2 also returns fuzzy matches, such as --help for --p.
+    # Compare literal prefix matches independently of the shell's ranking.
+    set -l prefix (string match -r -- '\S+$' "$argv[2]")
+    set -l actual (complete -C "$argv[2]" | string replace -r '\t.*$' '' | string match -- "$prefix*" | sort | string join ' ')
     if test "$actual" != "$expected"
         printf 'Fish: %s: expected <%s>, got <%s>\n' "$argv[2]" "$expected" "$actual" >&2
         exit 1
     end
     set -g checks (math $checks + 1)
 end
+check '--help --profile --verbose --version' 'cmder-test --'
 check '--verbose --version' 'cmder-test --v'
 check --profile 'cmder-test --p'
 check '--db-only --format --help' 'cmder-test db inspect --'
