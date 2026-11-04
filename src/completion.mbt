@@ -1,17 +1,19 @@
 ///|
-fn collect_option_words(options : Array[OptionDef]) -> String {
+fn collect_option_words(options : Array[CompletionOption]) -> String {
   let words : Array[String] = []
   for opt in options {
-    words.push("--" + opt.name)
-    if has_short(opt) {
-      words.push("-" + opt.short.to_string())
+    if opt.long is Some(name) {
+      words.push("--" + name)
+    }
+    if opt.short is Some(short) {
+      words.push("-" + short.to_string())
     }
   }
   words.join(" ")
 }
 
 ///|
-fn collect_command_names(commands : Array[CommandDef]) -> String {
+fn collect_command_names(commands : Array[CompletionCommand]) -> String {
   commands.map(fn(c) { c.name }).join(" ")
 }
 
@@ -29,8 +31,8 @@ let dollar : String = "$"
 ///|
 fn render_shell_scan(
   sb : StringBuilder,
-  options : Array[OptionDef],
-  commands : Array[CommandDef],
+  options : Array[CompletionOption],
+  commands : Array[CompletionCommand],
   fn_name : String,
   limit : String,
 ) -> Unit {
@@ -38,23 +40,25 @@ fn render_shell_scan(
   sb.write_string("    case \"" + dollar + "{words[pos]}\" in\n")
   sb.write_string("      --) return ;;\n")
   for opt in options {
-    let long = "'--" + escape_single_quote(opt.name) + "'"
-    let short = if has_short(opt) {
-      "|'-" + escape_single_quote(opt.short.to_string()) + "'"
-    } else {
-      ""
+    let patterns : Array[String] = []
+    if opt.long is Some(name) {
+      patterns.push("'--" + escape_single_quote(name) + "'")
     }
-    let increment = if opt.type_ == BoolOpt { 1 } else { 2 }
+    if opt.short is Some(short) {
+      patterns.push("'-" + escape_single_quote(short.to_string()) + "'")
+    }
+    let increment = if opt.takes_value { 2 } else { 1 }
     sb.write_string(
       "      " +
-      long +
-      short +
+      patterns.join("|") +
       ") ((pos += " +
       increment.to_string() +
       ")) ;;\n",
     )
-    if opt.type_ != BoolOpt {
-      sb.write_string("      " + long + "=*) ((pos += 1)) ;;\n")
+    if opt.takes_value && opt.long is Some(name) {
+      sb.write_string(
+        "      '--" + escape_single_quote(name) + "'=*) ((pos += 1)) ;;\n",
+      )
     }
   }
   for i, cmd in commands {
@@ -67,7 +71,7 @@ fn render_shell_scan(
       "; return ;;\n",
     )
   }
-  let has_short_options = options.any(fn(opt) { has_short(opt) })
+  let has_short_options = options.any(opt => opt.short is Some(_))
   if has_short_options {
     sb.write_string("      -[!-]*)\n")
     sb.write_string(
@@ -84,15 +88,15 @@ fn render_shell_scan(
     )
     sb.write_string("          case \"" + dollar + "short\" in\n")
     for opt in options {
-      if has_short(opt) {
-        let action = if opt.type_ == BoolOpt {
+      if opt.short is Some(short) {
+        let action = if !opt.takes_value {
           ":"
         } else {
           "[[ -z \"" + dollar + "rest\" ]] && ((pos += 1)); break"
         }
         sb.write_string(
           "            '" +
-          escape_single_quote(opt.short.to_string()) +
+          escape_single_quote(short.to_string()) +
           "') " +
           action +
           " ;;\n",
@@ -111,8 +115,8 @@ fn render_shell_scan(
 fn render_bash_node(
   sb : StringBuilder,
   fn_name : String,
-  options : Array[OptionDef],
-  commands : Array[CommandDef],
+  options : Array[CompletionOption],
+  commands : Array[CompletionCommand],
 ) -> Unit {
   sb.write_string(fn_name + "() {\n")
   render_shell_scan(sb, options, commands, fn_name, "cword")
@@ -188,7 +192,12 @@ pub fn CliApp::render_bash_completion(self : CliApp) -> String {
   sb.write_string("  local pos=1\n")
   sb.write_string("  " + fn_name + "_root\n")
   sb.write_string("}\n\n")
-  render_bash_node(sb, fn_name + "_root", self.root_options, self.commands)
+  render_bash_node(
+    sb,
+    fn_name + "_root",
+    completion_options(self.root_options, version=true),
+    completion_commands(self.commands, self.root_options),
+  )
   sb.write_string("complete -F " + fn_name + " " + self.name + "\n")
   sb.to_string()
 }
@@ -196,31 +205,25 @@ pub fn CliApp::render_bash_completion(self : CliApp) -> String {
 // === Zsh ===
 
 ///|
-fn render_zsh_options(sb : StringBuilder, options : Array[OptionDef]) -> Unit {
+fn render_zsh_options(
+  sb : StringBuilder,
+  options : Array[CompletionOption],
+) -> Unit {
   if options.length() == 0 {
     return
   }
   sb.write_string("  _arguments \\\n")
   for i, opt in options {
     let desc = escape_single_quote(opt.description)
-    let value_spec = if opt.type_ == BoolOpt { "" } else { ":value:" }
-    let flag = if has_short(opt) {
-      "'-" +
-      opt.short.to_string() +
-      "[" +
-      desc +
-      "]" +
-      value_spec +
-      "' '--" +
-      opt.name +
-      "[" +
-      desc +
-      "]" +
-      value_spec +
-      "'"
-    } else {
-      "'--" + opt.name + "[" + desc + "]" + value_spec + "'"
+    let value_spec = if opt.takes_value { ":value:" } else { "" }
+    let spellings : Array[String] = []
+    if opt.short is Some(short) {
+      spellings.push("'-\{short}[\{desc}]\{value_spec}'")
     }
+    if opt.long is Some(name) {
+      spellings.push("'--\{name}[\{desc}]\{value_spec}'")
+    }
+    let flag = spellings.join(" ")
     let end = if i < options.length() - 1 { " \\" } else { "" }
     sb.write_string("    " + flag + end + "\n")
   }
@@ -229,7 +232,7 @@ fn render_zsh_options(sb : StringBuilder, options : Array[OptionDef]) -> Unit {
 ///|
 fn render_zsh_command(
   sb : StringBuilder,
-  cmd : CommandDef,
+  cmd : CompletionCommand,
   fn_name : String,
 ) -> Unit {
   sb.write_string(fn_name + "() {\n")
@@ -279,19 +282,21 @@ pub fn CliApp::render_zsh_completion(self : CliApp) -> String {
   let fn_name = "_" + self.name.replace(old="-", new="_")
   sb.write_string(fn_name + "() {\n")
   sb.write_string("  local pos=2\n")
-  render_shell_scan(sb, self.root_options, self.commands, fn_name, "CURRENT")
+  let root_options = completion_options(self.root_options, version=true)
+  let commands = completion_commands(self.commands, self.root_options)
+  render_shell_scan(sb, root_options, commands, fn_name, "CURRENT")
   sb.write_string("  (( pos > CURRENT )) && return\n")
   sb.write_string("  local -a commands\n")
   sb.write_string("  commands=(\n")
-  for cmd in self.commands {
+  for cmd in commands {
     let desc = escape_single_quote(cmd.description)
     sb.write_string("    '" + cmd.name + ":" + desc + "'\n")
   }
   sb.write_string("  )\n")
   sb.write_string("  _describe 'command' commands\n")
-  render_zsh_options(sb, self.root_options)
+  render_zsh_options(sb, root_options)
   sb.write_string("}\n\n")
-  for i, cmd in self.commands {
+  for i, cmd in commands {
     render_zsh_command(sb, cmd, fn_name + "_c" + i.to_string())
   }
   sb.write_string("compdef " + fn_name + " " + self.name + "\n")
@@ -305,22 +310,20 @@ fn render_fish_options(
   sb : StringBuilder,
   app_name : String,
   condition : String,
-  options : Array[OptionDef],
+  options : Array[CompletionOption],
 ) -> Unit {
   for opt in options {
-    let mut line = "complete -c " +
-      app_name +
-      " " +
-      condition +
-      " -l " +
-      opt.name
-    if has_short(opt) {
-      line = line + " -s " + opt.short.to_string()
+    let mut line = "complete -c " + app_name + " " + condition + " "
+    if opt.long is Some(name) {
+      line = line + " -l " + name
+    }
+    if opt.short is Some(short) {
+      line = line + " -s " + short.to_string()
     }
     if opt.description.length() > 0 {
       line = line + " -d '" + escape_single_quote(opt.description) + "'"
     }
-    if opt.type_ != BoolOpt {
+    if opt.takes_value {
       line = line + " -r"
     }
     sb.write_string(line + "\n")
@@ -332,21 +335,26 @@ fn render_fish_options(
 fn render_fish_states(
   sb : StringBuilder,
   state : String,
-  options : Array[OptionDef],
-  commands : Array[CommandDef],
+  options : Array[CompletionOption],
+  commands : Array[CompletionCommand],
 ) -> Unit {
   sb.write_string("      case " + state + "\n        switch \"$word\"\n")
   for opt in options {
-    sb.write_string("          case '--" + escape_single_quote(opt.name) + "'")
-    if has_short(opt) {
-      sb.write_string(" '-" + escape_single_quote(opt.short.to_string()) + "'")
+    sb.write_string("          case")
+    if opt.long is Some(name) {
+      sb.write_string(" '--" + escape_single_quote(name) + "'")
+    }
+    if opt.short is Some(short) {
+      sb.write_string(" '-" + escape_single_quote(short.to_string()) + "'")
     }
     sb.write_string("\n")
-    if opt.type_ != BoolOpt {
+    if opt.takes_value {
       sb.write_string("            set skip 1\n")
-      sb.write_string(
-        "          case '--" + escape_single_quote(opt.name) + "=*'\n",
-      )
+      if opt.long is Some(name) {
+        sb.write_string(
+          "          case '--" + escape_single_quote(name) + "=*'\n",
+        )
+      }
     }
   }
   for i, cmd in commands {
@@ -355,7 +363,7 @@ fn render_fish_states(
       "            set state " + state + "_c" + i.to_string() + "\n",
     )
   }
-  if options.any(fn(opt) { has_short(opt) }) {
+  if options.any(opt => opt.short is Some(_)) {
     sb.write_string(
       (
         #|          case '-*'
@@ -368,13 +376,13 @@ fn render_fish_states(
       ),
     )
     for opt in options {
-      if has_short(opt) {
+      if opt.short is Some(short) {
         sb.write_string(
           "                case '" +
-          escape_single_quote(opt.short.to_string()) +
+          escape_single_quote(short.to_string()) +
           "'\n",
         )
-        if opt.type_ != BoolOpt {
+        if opt.takes_value {
           sb.write_string(
             (
               #|                  if test -z "$rest"
@@ -408,8 +416,8 @@ fn render_fish_node(
   app_name : String,
   context_fn : String,
   state : String,
-  options : Array[OptionDef],
-  commands : Array[CommandDef],
+  options : Array[CompletionOption],
+  commands : Array[CompletionCommand],
 ) -> Unit {
   let condition = "-n '" + context_fn + " " + state + "'"
   render_fish_options(sb, app_name, condition, options)
@@ -472,7 +480,9 @@ pub fn CliApp::render_fish_completion(self : CliApp) -> String {
       #|
     ),
   )
-  render_fish_states(sb, "root", self.root_options, self.commands)
+  let root_options = completion_options(self.root_options, version=true)
+  let commands = completion_commands(self.commands, self.root_options)
+  render_fish_states(sb, "root", root_options, commands)
   sb.write_string(
     (
       #|    end
@@ -482,13 +492,6 @@ pub fn CliApp::render_fish_completion(self : CliApp) -> String {
       #|
     ),
   )
-  render_fish_node(
-    sb,
-    self.name,
-    context_fn,
-    "root",
-    self.root_options,
-    self.commands,
-  )
+  render_fish_node(sb, self.name, context_fn, "root", root_options, commands)
   sb.to_string()
 }

@@ -41,7 +41,41 @@ fn build_positional(pos : PositionalDef, last : Bool) -> @argparse.PositionArg {
 }
 
 ///|
-/// Converts a command definition into an `argparse.Command`.
+fn command_about(cmd : CommandDef) -> String {
+  if cmd.examples.is_empty() {
+    return cmd.description
+  }
+  let examples = "Examples:\n  \{cmd.examples.join("\n  ")}"
+  if cmd.description == "" {
+    examples
+  } else {
+    "\{cmd.description}\n\n\{examples}"
+  }
+}
+
+///|
+fn build_cli_command(app : CliApp) -> @argparse.Command {
+  let flags : Array[@argparse.FlagArg] = []
+  let options : Array[@argparse.OptionArg] = []
+  for opt in app.root_options {
+    match opt.type_ {
+      BoolOpt => flags.push(build_option_to_flag(opt))
+      StringOpt | IntOpt => options.push(build_option_to_option_arg(opt))
+    }
+  }
+  @argparse.Command(
+    app.name,
+    about=app.description,
+    version=app.version,
+    flags~,
+    options~,
+    subcommands=app.commands.map(build_command),
+  )
+}
+
+///|
+/// Converts a command definition into an `argparse.Command`. Explicit examples
+/// are included in its help description; callback execution is not attached.
 ///
 /// ```mbt check
 /// test {
@@ -65,7 +99,7 @@ pub fn build_command(cmd : CommandDef) -> @argparse.Command {
   let subcommands = cmd.subcommands.map(fn(sub) { build_command(sub) })
   @argparse.Command(
     cmd.name,
-    about=cmd.description,
+    about=command_about(cmd),
     flags~,
     options~,
     positionals~,

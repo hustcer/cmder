@@ -17,7 +17,7 @@ check() {
   fi
   checks=$((checks + 1))
 }
-check '--verbose' --v
+check '--verbose --version' --v
 check '--profile' --p
 check '--db-only' db inspect --db
 cursor_word=--db cursor_point=26 test_line='cmder-test db inspect --dbZ' check '--db-only' db inspect --dbZ
@@ -27,7 +27,7 @@ check '' cache inspect --db
 check '--db-only' --profile cache db inspect --db
 check '--db-only' --profile=cache db inspect --db
 test_line='cmder-test --profile=cache db inspect --db' check '--db-only' --profile = cache db inspect --db
-test_line='cmder-test --profile=cache ' check 'db cache files --verbose -v --profile -p' --profile = cache ''
+test_line='cmder-test --profile=cache ' check 'db cache files custom-help custom-short help --verbose -v --profile -p --help -h --version -V' --profile = cache ''
 test_line='cmder-test --profile=cache:db db inspect --db' check '--db-only' --profile = cache : db db inspect --db
 check '--db-only' --profile = db inspect --db
 check '--db-only' --profile "'cache db'" db inspect --db
@@ -39,4 +39,19 @@ check '' db inspect --format ''
 check '' files -- --f
 check '' -- db inspect --db
 check '' db -- inspect --db
+check '--help' --h
+check '--version' --version
+check '-V' -V
+check 'help' he
+check '--help' db inspect --h
+check '' db inspect --version
+check 'db' help d
+check 'inspect' help db i
+check '--help' help db inspect --h
+check '' help db inspect --db
+check 'inspect' db help i
+check '' custom-help --help ''
+check '-h' custom-help -h
+check '--help' custom-short --hel
+check '' custom-short -h ''
 printf 'Bash: %s behavior checks passed\n' "$checks"

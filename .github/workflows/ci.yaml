@@ -36,3 +36,6 @@ jobs:
       - name: Test generated completions
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: nu scripts/check-completions.nu
+      - name: Test CLI process boundaries
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
+        run: nu scripts/check-cli.nu

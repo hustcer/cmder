@@ -58,15 +58,6 @@ pub fn cli(
 }
 
 ///|
-fn matches_to_context(m : @argparse.Matches) -> Context {
-  let sub = match m.subcommand {
-    Some((name, sub_matches)) => Some((name, matches_to_context(sub_matches)))
-    None => None
-  }
-  { flags: m.flags, values: m.values, subcommand: sub, }
-}
-
-///|
 fn find_command_def(commands : Array[CommandDef], name : String) -> CommandDef? {
   for cmd in commands {
     if cmd.name == name {
@@ -92,35 +83,55 @@ fn inherit_context(parent : Context, child : Context) -> Context {
 }
 
 ///|
-fn execute_command(commands : Array[CommandDef], ctx : Context) -> Unit raise {
-  match ctx.subcommand {
-    Some((name, sub_ctx)) =>
-      match find_command_def(commands, name) {
-        Some(cmd) => {
-          let sub_ctx = inherit_context(ctx, sub_ctx)
-          if cmd.subcommands.length() > 0 && sub_ctx.subcommand is Some(_) {
-            execute_command(cmd.subcommands, sub_ctx)
-          } else {
-            match cmd.run {
-              Some(run_fn) => run_fn(sub_ctx)
-              None => {
-                let subs = cmd.subcommands.map(fn(c) { c.name }).join(", ")
-                fail(
-                  "missing subcommand for '" + name + "'. Available: " + subs,
-                )
-              }
-            }
-          }
-        }
-        None => fail("unknown command: " + name)
+fn execute_command(
+  app : CliApp,
+  invocation : Invocation,
+) -> Unit raise CliError {
+  if invocation.command_path.is_empty() {
+    raise CliError::MissingCommand
+  }
+  guard find_command_path(app.commands, invocation.command_path) is Some(cmd) else {
+    raise CliError::UnknownCommand(invocation.command_path)
+  }
+  match cmd.run {
+    Some(callback) => callback(invocation.context)
+    None =>
+      if cmd.subcommands.is_empty() {
+        raise CliError::MissingHandler(cmd.name)
+      } else {
+        raise CliError::MissingSubcommand(
+          cmd.name,
+          cmd.subcommands.map(c => c.name),
+        )
       }
-    None => fail("no command specified. Use --help for usage.")
+  }
+}
+
+///|
+#cfg(target="js")
+fn process_argv() -> ArrayView[String] {
+  match @env.args() {
+    [_, _, .. rest] => rest
+    _ => []
+  }
+}
+
+///|
+#cfg(not(target="js"))
+fn process_argv() -> ArrayView[String] {
+  match @env.args() {
+    [_, .. rest] => rest
+    [] => []
   }
 }
 
 ///|
 /// Parses arguments and executes the selected command's callback.
-/// Omit `argv` to read process arguments.
+/// Omit `argv` to read process arguments. Help and version print and exit with
+/// status 0, preserving the convenience API. Use parse for side-effect-free
+/// handling. Callback signatures and closest-value precedence are unchanged.
+/// Parse failures raise CliError::ParseError with the original diagnostic;
+/// missing command, subcommand, or callback errors have distinct CliError cases.
 ///
 /// ```mbt check
 /// test {
@@ -133,27 +144,16 @@ fn execute_command(commands : Array[CommandDef], ctx : Context) -> Unit raise {
 /// }
 /// ```
 pub fn CliApp::run(self : CliApp, argv~ : Array[String]? = None) -> Unit raise {
-  let flags : Array[@argparse.FlagArg] = []
-  let options : Array[@argparse.OptionArg] = []
-  for opt in self.root_options {
-    match opt.type_ {
-      BoolOpt => flags.push(build_option_to_flag(opt))
-      StringOpt | IntOpt => options.push(build_option_to_option_arg(opt))
+  let args = match argv {
+    Some(args) => args[:]
+    None => process_argv()
+  }
+  match self.parse(argv=args) {
+    Parsed(invocation) => execute_command(self, invocation)
+    Help(text) | Version(text) => {
+      println(text)
+      @env.exit(0)
     }
+    Failed(error) => raise error
   }
-  let subcommands = self.commands.map(fn(c) { build_command(c) })
-  let argparse_cmd = @argparse.Command(
-    self.name,
-    about=self.description,
-    version=self.version,
-    flags~,
-    options~,
-    subcommands~,
-  )
-  let matches = match argv {
-    Some(args) => argparse_cmd.parse(argv=args)
-    None => argparse_cmd.parse()
-  }
-  let ctx = matches_to_context(matches)
-  execute_command(self.commands, ctx)
 }

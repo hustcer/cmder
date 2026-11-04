@@ -166,15 +166,72 @@ When a deeper subcommand is selected, only its callback runs; ancestor callbacks
 
 Callbacks have the signature `(Context) -> Unit`. Errors from methods called inside a callback must be handled locally.
 
-| Context method              | Return type          | Behavior                                                   |
-| --------------------------- | -------------------- | ---------------------------------------------------------- |
-| `get_bool(name)`            | `Bool`               | Returns `false` when absent                                |
-| `get_string(name)`          | `String?`            | Returns the first value, or `None` when absent             |
-| `get_string_required(name)` | `String raise`       | Raises an error when absent                                |
-| `get_int(name)`             | `Int32?`             | Returns `None` when absent or invalid                      |
-| `get_int_required(name)`    | `Int32 raise`        | Raises an error when absent or invalid                     |
-| `get_strings(name)`         | `Array[String]`      | Returns all values, or an empty array when absent          |
-| `get_subcommand()`          | `(String, Context)?` | Returns the selected next-level subcommand and its context |
+| Context method              | Return type             | Behavior                                                                            |
+| --------------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
+| `get_bool(name)`            | `Bool`                  | Returns `false` when absent                                                         |
+| `get_string(name)`          | `String?`               | Returns the first value, or `None` when absent                                      |
+| `get_string_required(name)` | `String raise`          | Raises an error when absent                                                         |
+| `get_int(name)`             | `Int32?`                | Returns `None` when absent or invalid                                               |
+| `get_int_checked(name)`     | `Int32? raise CliError` | Returns `None` only when absent; malformed input and overflow raise distinct errors |
+| `get_int_required(name)`    | `Int32 raise`           | Raises an error when absent or invalid                                              |
+| `get_strings(name)`         | `Array[String]`         | Returns all values, or an empty array when absent                                   |
+| `get_subcommand()`          | `(String, Context)?`    | Returns the selected next-level subcommand and its context                          |
+
+Use `get_int_checked` when a default should apply only to missing input. It accepts
+signed decimal `Int32` values, including leading zeroes, and raises
+`CliError::InvalidInteger(name, value)` or `IntegerOutOfRange(name, value)` for invalid
+input. The existing `get_int` retains its lenient behavior and legacy digit-length
+limit. Product-specific ranges remain the application's responsibility.
+
+Required getters and command execution errors now use `CliError`, whose `message()`
+and `to_string()` return display-ready text without internal source locations.
+`ParseError(message)` preserves argparse's original diagnostic and contextual help;
+its text is not a machine-readable error category. Callback signatures remain unchanged.
+
+## Parsing Without Execution
+
+`app.parse(argv=...)` requires explicit arguments without the executable name. It
+does not read process arguments or environment variables, print, exit, or invoke callbacks:
+
+```moonbit
+let app = @cmder.cli(name="app", commands=[
+  @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))]),
+])
+match app.parse(argv=["go", "--count", "3"]) {
+  Parsed(call) => {
+    // call.command_path is ["go"]. The host chooses how to execute it.
+    let count = call.context.get_int_checked("count") catch {
+      err => { println(err.message()); return }
+    }
+    println(count.unwrap_or(1))
+  }
+  Help(text) | Version(text) => println(text)
+  Failed(error) => println(error.message())
+}
+```
+
+`Parsed` also supports root arguments (`command_path` is empty) and commands without
+callbacks. The selected command's `context` includes ancestor values, with descendant
+values and defaults taking precedence; `context.subcommand` is `None`. Integer
+conversion remains lazy, matching `run`; use checked getters when consuming numbers.
+
+`call.source_of(name)` returns `Argv`, `Env`, `Default`, or `None` for an absent value.
+`call.was_provided(name)` is true only for an effective argv value, including an empty
+string or a value equal to the default. A descendant default shadows an ancestor argv
+value in both the context and source information. Source information is a parse
+snapshot and does not change if the caller edits the returned context. Current
+argument definitions do not configure environment bindings, so they produce `Argv`
+and `Default`; `Env` preserves the underlying source model without implicit environment access.
+
+`run()` remains the convenience API: it optionally reads process arguments, executes
+callbacks, and prints and exits successfully for help/version. Use `parse` when the
+host must retain control over output, execution, and exit status. Existing public
+record fields and `run`/`get_int` signatures remain unchanged.
+
+For help text alone, use `app.render_help()` or
+`app.render_help(command_path=["db", "migrate"])`. This performs no argument parsing
+or callback execution, includes explicit command examples, and raises
+`CliError::UnknownCommand(path)` for an unknown path.
 
 ## Explicit Arguments and Testing
 
@@ -227,7 +284,7 @@ Applications must provide their own script export entry point, or write these st
 
 For a program named `myapp`, save the generated scripts separately, then load them in the corresponding shell:
 
-Bash scripts use built-in completion variables and do not require `bash-completion`. Completion follows the declared command path and option scope; after `--`, command and option suggestions stop. Custom value and positional filename suggestions are not generated by this library.
+Bash scripts use built-in completion variables and do not require `bash-completion`. Completion follows the declared command path and option scope; after `--`, command and option suggestions stop. Built-in help flags, root version flags, and `help` command topics are included. Application-defined long and short spellings shadow the corresponding builtins independently, matching argparse. Custom value and positional filename suggestions are not generated by this library.
 
 ```bash
 # Bash
@@ -254,6 +311,9 @@ source ./myapp.fish
 | `command(name=..., description=..., options=..., positionals=..., examples=..., subcommands=..., run=...)` | Define a command                                                         |
 | `string`, `int`, `bool`, `positional`                                                                      | Define arguments                                                         |
 | `CliApp::run(argv=...)`                                                                                    | Parse arguments and execute the callback                                 |
+| `CliApp::parse(argv=...)`                                                                                  | Return `Parsed`, `Help`, `Version`, or `Failed` without I/O or execution |
+| `CliApp::render_help(command_path=...)`                                                                    | Render root or nested help, including explicit examples                  |
+| `Invocation::source_of` / `was_provided`                                                                   | Query effective argument provenance                                      |
 | `CliApp::render_schema` / `render_schema_json`                                                             | Export CLI definitions                                                   |
 | `CliApp::render_bash_completion` / `render_zsh_completion` / `render_fish_completion`                      | Generate completion scripts                                              |
 | `build_command(command)`                                                                                   | Convert to an underlying `argparse.Command` for direct use with argparse |
@@ -275,6 +335,9 @@ moon run src/examples/cli --target native -- --schema
 To validate individual targets, use `moon test --target native`, `moon test --target js`, and `moon test --target wasm-gc`. Running the JS target requires a suitable JavaScript runtime.
 
 Run `nu scripts/check-completions.nu` for shell integration regressions (Nushell 0.116+, Bash, Fish, and Zsh required). These execute generated scripts in clean shells; Zsh completion widget calls are captured outside an interactive ZLE session. CI runs this suite on the native target.
+
+Run `nu scripts/check-cli.nu` to verify process argv, `run` output/exit behavior,
+and `parse` returning control to its host on JS, native, and wasm-gc.
 
 ## Acknowledgments and License
 

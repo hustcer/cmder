@@ -23,6 +23,22 @@ pub fn positional(String, description? : String, required? : Bool) -> Positional
 pub fn string(String, short? : Char, description? : String, required? : Bool, default? : String?) -> OptionDef
 
 // Errors
+#derive(@debug.Debug)
+pub(all) suberror CliError {
+  ParseError(String)
+  MissingCommand
+  UnknownCommand(Array[String])
+  MissingSubcommand(String, Array[String])
+  MissingHandler(String)
+  MissingOption(String)
+  InvalidInteger(String, String)
+  IntegerOutOfRange(String, String)
+}
+pub fn CliError::message(Self) -> String
+pub fn CliError::output(Self, &Logger) -> Unit
+pub fn CliError::to_repr(Self) -> @debug.Repr
+pub fn CliError::to_string(Self) -> String
+pub impl Show for CliError
 
 // Types and methods
 pub(all) struct CliApp {
@@ -32,8 +48,10 @@ pub(all) struct CliApp {
   root_options : Array[OptionDef]
   commands : Array[CommandDef]
 }
+pub fn CliApp::parse(Self, argv~ : ArrayView[String]) -> ParseOutcome
 pub fn CliApp::render_bash_completion(Self) -> String
 pub fn CliApp::render_fish_completion(Self) -> String
+pub fn CliApp::render_help(Self, command_path? : ArrayView[String]) -> String raise CliError
 pub fn CliApp::render_schema(Self) -> String
 pub fn CliApp::render_schema_json(Self) -> @json.Json
 pub fn CliApp::render_zsh_completion(Self) -> String
@@ -56,11 +74,20 @@ pub(all) struct Context {
 }
 pub fn Context::get_bool(Self, String) -> Bool
 pub fn Context::get_int(Self, String) -> Int32?
+pub fn Context::get_int_checked(Self, String) -> Int32? raise CliError
 pub fn Context::get_int_required(Self, String) -> Int32 raise
 pub fn Context::get_string(Self, String) -> String?
 pub fn Context::get_string_required(Self, String) -> String raise
 pub fn Context::get_strings(Self, String) -> Array[String]
 pub fn Context::get_subcommand(Self) -> (String, Self)?
+
+pub struct Invocation {
+  command_path : Array[String]
+  context : Context
+  // private fields
+}
+pub fn Invocation::source_of(Self, String) -> ValueSource?
+pub fn Invocation::was_provided(Self, String) -> Bool
 
 #derive(@debug.Debug)
 pub(all) struct OptionDef {
@@ -86,11 +113,28 @@ pub fn OptionType::to_repr(Self) -> @debug.Repr
 pub fn OptionType::to_string(Self) -> String
 pub impl Show for OptionType
 
+pub(all) enum ParseOutcome {
+  Parsed(Invocation)
+  Help(String)
+  Version(String)
+  Failed(CliError)
+}
+
 pub(all) struct PositionalDef {
   name : String
   description : String
   required : Bool
 }
+
+#derive(Eq, @debug.Debug)
+pub(all) enum ValueSource {
+  Argv
+  Env
+  Default
+}
+pub fn ValueSource::equal(Self, Self) -> Bool
+pub fn ValueSource::not_equal(Self, Self) -> Bool
+pub fn ValueSource::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

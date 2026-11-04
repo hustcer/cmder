@@ -36,7 +36,7 @@ pub fn Context::get_string(self : Context, name : String) -> String? {
 }
 
 ///|
-/// Returns the first value, raising an error if it is absent.
+/// Returns the first value, raising CliError::MissingOption if it is absent.
 ///
 /// ```mbt check
 /// test {
@@ -54,7 +54,7 @@ pub fn Context::get_string_required(
 ) -> String raise {
   match self.get_string(name) {
     Some(v) => v
-    None => fail("missing required option: " + name)
+    None => raise CliError::MissingOption(name)
   }
 }
 
@@ -72,45 +72,20 @@ pub fn Context::get_string_required(
 /// }
 /// ```
 pub fn Context::get_int(self : Context, name : String) -> Int32? {
-  match self.get_string(name) {
-    Some(s) => {
-      let chars = s.to_array()
-      if chars.length() == 0 {
-        return None
-      }
-      let mut i = 0
-      let negative = chars[0] == '-'
-      if negative {
-        i = 1
-      }
-      let digits = chars.length() - i
-      if digits == 0 || digits > 18 {
-        return None
-      }
-      let mut result : Int64 = 0L
-      while i < chars.length() {
-        let c = chars[i]
-        if c >= '0' && c <= '9' {
-          result = result * 10L + (c.to_int() - '0'.to_int()).to_int64()
-        } else {
-          return None
-        }
-        i = i + 1
-      }
-      if negative {
-        result = -result
-      }
-      if result < (-2147483648).to_int64() || result > 2147483647L {
-        return None
-      }
-      Some(result.to_int())
-    }
-    None => None
+  guard self.get_string(name) is Some(value) else { return None }
+  // Preserve the legacy length cap, even for arbitrarily padded zeroes.
+  let digits = value.length() - (if value.has_prefix("-") { 1 } else { 0 })
+  if digits > 18 {
+    return None
+  }
+  self.get_int_checked(name) catch {
+    _ => None
   }
 }
 
 ///|
-/// Parses a required integer, raising an error if missing or invalid.
+/// Parses a required integer, raising MissingOption when absent and a checked
+/// integer error when malformed or outside Int32. No application range is imposed.
 ///
 /// ```mbt check
 /// test {
@@ -123,10 +98,55 @@ pub fn Context::get_int(self : Context, name : String) -> Int32? {
 /// }
 /// ```
 pub fn Context::get_int_required(self : Context, name : String) -> Int32 raise {
-  match self.get_int(name) {
+  match self.get_int_checked(name) {
     Some(v) => v
-    None => fail("missing or invalid required option: " + name)
+    None => raise CliError::MissingOption(name)
   }
+}
+
+///|
+/// Reads an optional signed decimal Int32. Missing values return None; empty,
+/// nondecimal, and sign-only values raise InvalidInteger; overflow raises
+/// IntegerOutOfRange. A leading minus is accepted, matching get_int's grammar.
+/// Leading zeroes do not cause overflow. No product-specific range is checked.
+///
+/// ```mbt check
+/// test {
+///   let ctx : @cmder.Context = {
+///     flags: {},
+///     values: { "count": ["-2"] },
+///     subcommand: None,
+///   }
+///   assert_true(ctx.get_int_checked("count") == Some(-2))
+///   assert_true(ctx.get_int_checked("missing") is None)
+/// }
+/// ```
+pub fn Context::get_int_checked(
+  self : Context,
+  name : String,
+) -> Int32? raise CliError {
+  guard self.get_string(name) is Some(value) else { return None }
+  let negative = value.has_prefix("-")
+  let start = if negative { 1 } else { 0 }
+  if start == value.length() {
+    raise CliError::InvalidInteger(name, value)
+  }
+  // Validate the complete spelling before classifying overflow.
+  for index in start..<value.length() {
+    if value[index] < '0' || value[index] > '9' {
+      raise CliError::InvalidInteger(name, value)
+    }
+  }
+  let limit = if negative { 2147483648L } else { 2147483647L }
+  let mut magnitude = 0L
+  for index in start..<value.length() {
+    let digit = (value[index].to_int() - 48).to_int64()
+    if magnitude > (limit - digit) / 10L {
+      raise CliError::IntegerOutOfRange(name, value)
+    }
+    magnitude = magnitude * 10L + digit
+  }
+  Some((if negative { -magnitude } else { magnitude }).to_int())
 }
 
 ///|
