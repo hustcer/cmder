@@ -32,10 +32,10 @@ test "positionals accessible via context get_strings" {
       name="cat",
       description="Cat files",
       positionals=[@cmder.positional("files", description="Files to cat")],
-      run=Some(fn(ctx) { captured.val = ctx.get_strings("files") }),
+      run=ctx => captured.val = ctx.get_strings("files"),
     ),
   ])
-  app.run(argv=Some(["cat", "a.txt", "b.txt"]))
+  app.run(argv=["cat", "a.txt", "b.txt"])
   inspect(captured.val.length(), content="2")
   inspect(captured.val[0], content="a.txt")
   inspect(captured.val[1], content="b.txt")
@@ -52,18 +52,18 @@ test "non-final positionals leave values for later arguments" {
         @cmder.positional("source", required=true),
         @cmder.positional("destination"),
       ],
-      run=Some(fn(ctx) {
+      run=ctx => {
         source.val = ctx.get_string("source").unwrap_or("")
         destination.val = ctx.get_strings("destination")
-      }),
+      },
     ),
   ])
-  app.run(argv=Some(["copy", "a", "b", "c"]))
+  app.run(argv=["copy", "a", "b", "c"])
   inspect(source.val, content="a")
   inspect(destination.val.length(), content="2")
   inspect(destination.val[0], content="b")
   inspect(destination.val[1], content="c")
-  app.run(argv=Some(["copy", "a"]))
+  app.run(argv=["copy", "a"])
   inspect(destination.val.length(), content="0")
 }
 

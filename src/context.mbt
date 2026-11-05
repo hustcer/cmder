@@ -3,12 +3,9 @@
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = {
-///     flags: { "verbose": true },
-///     values: {},
-///     subcommand: None,
-///   }
-///   assert_true(ctx.get_bool("verbose"))
+///   let app = @cmder.cli(name="app", options=[@cmder.bool("verbose")])
+///   guard app.parse(argv=["--verbose"]) is Parsed(call) else { fail("parse") }
+///   assert_true(call.context.get_bool("verbose"))
 /// }
 /// ```
 pub fn Context::get_bool(self : Context, name : String) -> Bool {
@@ -20,12 +17,11 @@ pub fn Context::get_bool(self : Context, name : String) -> Bool {
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = {
-///     flags: {},
-///     values: { "name": ["Ada"] },
-///     subcommand: None,
-///   }
-///   assert_true(ctx.get_string("name") == Some("Ada"))
+///   let app = @cmder.cli(name="app", options=[
+///     @cmder.string("name", default="Ada"),
+///   ])
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
+///   assert_true(call.context.get_string("name") == Some("Ada"))
 /// }
 /// ```
 pub fn Context::get_string(self : Context, name : String) -> String? {
@@ -40,18 +36,17 @@ pub fn Context::get_string(self : Context, name : String) -> String? {
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = {
-///     flags: {},
-///     values: { "name": ["Ada"] },
-///     subcommand: None,
-///   }
-///   inspect(ctx.get_string_required("name"), content="Ada")
+///   let app = @cmder.cli(name="app", options=[
+///     @cmder.string("name", default="Ada"),
+///   ])
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
+///   inspect(call.context.get_string_required("name"), content="Ada")
 /// }
 /// ```
 pub fn Context::get_string_required(
   self : Context,
   name : String,
-) -> String raise {
+) -> String raise CliError {
   match self.get_string(name) {
     Some(v) => v
     None => raise CliError::MissingOption(name)
@@ -59,28 +54,20 @@ pub fn Context::get_string_required(
 }
 
 ///|
-/// Parses the first value as an `Int32`, returning `None` if missing or invalid.
+/// Reads a signed decimal Int32. Only absence returns None; malformed input
+/// raises InvalidInteger and overflow raises IntegerOutOfRange. Leading zeroes
+/// have no length limit. Declared integer options are already checked by parse.
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = {
-///     flags: {},
-///     values: { "count": ["3"] },
-///     subcommand: None,
-///   }
-///   assert_true(ctx.get_int("count") == Some(3))
+///   let app = @cmder.cli(name="app", options=[@cmder.int("count", default=3)])
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
+///   assert_true(call.context.get_int("count") == Some(3))
 /// }
 /// ```
-pub fn Context::get_int(self : Context, name : String) -> Int32? {
+pub fn Context::get_int(self : Context, name : String) -> Int32? raise CliError {
   guard self.get_string(name) is Some(value) else { return None }
-  // Preserve the legacy length cap, even for arbitrarily padded zeroes.
-  let digits = value.length() - (if value.has_prefix("-") { 1 } else { 0 })
-  if digits > 18 {
-    return None
-  }
-  self.get_int_checked(name) catch {
-    _ => None
-  }
+  Some(parse_integer_value(name, value))
 }
 
 ///|
@@ -89,48 +76,23 @@ pub fn Context::get_int(self : Context, name : String) -> Int32? {
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = {
-///     flags: {},
-///     values: { "count": ["3"] },
-///     subcommand: None,
-///   }
-///   inspect(ctx.get_int_required("count"), content="3")
+///   let app = @cmder.cli(name="app", options=[@cmder.int("count", default=3)])
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
+///   inspect(call.context.get_int_required("count"), content="3")
 /// }
 /// ```
-pub fn Context::get_int_required(self : Context, name : String) -> Int32 raise {
-  match self.get_int_checked(name) {
+pub fn Context::get_int_required(
+  self : Context,
+  name : String,
+) -> Int32 raise CliError {
+  match self.get_int(name) {
     Some(v) => v
     None => raise CliError::MissingOption(name)
   }
 }
 
 ///|
-/// Reads an optional signed decimal Int32. Missing values return None; empty,
-/// nondecimal, and sign-only values raise InvalidInteger; overflow raises
-/// IntegerOutOfRange. A leading minus is accepted, matching get_int's grammar.
-/// Leading zeroes do not cause overflow. No product-specific range is checked.
-///
-/// ```mbt check
-/// test {
-///   let ctx : @cmder.Context = {
-///     flags: {},
-///     values: { "count": ["-2"] },
-///     subcommand: None,
-///   }
-///   assert_true(ctx.get_int_checked("count") == Some(-2))
-///   assert_true(ctx.get_int_checked("missing") is None)
-/// }
-/// ```
-pub fn Context::get_int_checked(
-  self : Context,
-  name : String,
-) -> Int32? raise CliError {
-  guard self.get_string(name) is Some(value) else { return None }
-  Some(parse_integer_value(name, value))
-}
-
-///|
-// Shared by checked getters and opt-in parse-time type validation.
+// Shared by getters and parse-time validation.
 fn parse_integer_value(name : String, value : String) -> Int32 raise CliError {
   let negative = value.has_prefix("-")
   let start = if negative { 1 } else { 0 }
@@ -156,31 +118,31 @@ fn parse_integer_value(name : String, value : String) -> Int32 raise CliError {
 }
 
 ///|
-/// Returns all values associated with a name, or an empty array.
+/// Returns a fresh copy of all values associated with a name, or an empty array.
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = {
-///     flags: {},
-///     values: { "files": ["a", "b"] },
-///     subcommand: None,
-///   }
-///   inspect(ctx.get_strings("files").length(), content="2")
+///   let app = @cmder.cli(name="app", positionals=[@cmder.positional("files")])
+///   guard app.parse(argv=["a", "b"]) is Parsed(call) else { fail("parse") }
+///   inspect(call.context.get_strings("files").length(), content="2")
 /// }
 /// ```
 pub fn Context::get_strings(self : Context, name : String) -> Array[String] {
-  self.values.get(name).unwrap_or([])
+  self.values.get(name).map(values => values.copy()).unwrap_or([])
 }
 
 ///|
-/// Returns the selected nested command and its context, if present.
+/// Returns the current value's source, including explicit host overrides.
 ///
 /// ```mbt check
 /// test {
-///   let ctx : @cmder.Context = { flags: {}, values: {}, subcommand: None, }
-///   assert_true(ctx.get_subcommand() is None)
+///   let app = @cmder.cli(name="app", options=[@cmder.int("count", default=1)])
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
+///   assert_true(
+///     call.context.source_of("count") == Some(@cmder.ValueSource::Default),
+///   )
 /// }
 /// ```
-pub fn Context::get_subcommand(self : Context) -> (String, Context)? {
-  self.subcommand
+pub fn Context::source_of(self : Context, name : String) -> ValueSource? {
+  self.sources.get(name)
 }

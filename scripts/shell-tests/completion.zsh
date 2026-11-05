@@ -21,9 +21,9 @@ check() {
   ((checks += 1))
 }
 help_specs='-h[Show help information.] --help[Show help information.]'
-db_specs="--db-only[] -f[]:value: --format[]:value: $help_specs"
+db_specs="--trace[] --db-only[] -f[]:value: --format[]:value: $help_specs"
 check "$db_specs" db inspect --
-check "--cache-only[] $help_specs" cache inspect --
+check "--trace[] --cache-only[] $help_specs" cache inspect --
 check "$db_specs" --profile cache db inspect --
 check "$db_specs" -vp cache db inspect --
 check "$db_specs" -vpcache db inspect --
@@ -31,13 +31,15 @@ check '' db inspect --format ''
 check '' files -- --f
 check '' -- db inspect --db
 check '' db -- inspect --db
-check "-v[] --verbose[] -p[]:value: --profile[]:value: $help_specs -V[Show version information.] --version[Show version information.]" --
-check "--force[] $help_specs" files --
+check "-v[] --verbose[] -p[]:value: --profile[]:value: --trace[] $help_specs -V[Show version information.] --version[Show version information.]" --
+check "--trace[] --force[] $help_specs" files --
 check "$help_specs" help db inspect --
-check '--help[]:value: -h[Show help information.]' custom-help --
-check '-h[]:value: --host[]:value: --help[Show help information.]' custom-short --
+check '--trace[] --help[]:value: -h[Show help information.]' custom-help --
+check '--trace[] -h[]:value: --host[]:value: --help[Show help information.]' custom-short --
 check '' custom-help --help ''
 check '' custom-short -h ''
+check "$db_specs" --trace db inspect --
+check "$db_specs" db --trace inspect --
 words=(cmder-test help db '')
 CURRENT=${#words[@]}
 specs=()
@@ -48,4 +50,24 @@ if [[ "${(j: :)described}" != 'inspect:' ]]; then
   exit 1
 fi
 ((checks += 1))
+# Check the actual shell-decoded _arguments field, including its inner grammar.
+expected_value=$(cat <<'SPEC'
+--value[\\';echo cmder-description;# \[x\]\: \[y\]\: 'again' \\]:value:
+SPEC
+)
+words=(cmder-test quoting --)
+CURRENT=${#words[@]}
+specs=()
+_cmder_test
+if [[ "${specs[2]}" != "$expected_value" ]]; then
+  print -u2 -- 'Zsh: option description was not encoded for _arguments'
+  exit 1
+fi
+((checks += 1))
+root_specs="-v[] --verbose[] -p[]:value: --profile[]:value: --trace[] $help_specs -V[Show version information.] --version[Show version information.]"
+check "$root_specs" input.txt files --
+if (( ${#described} != 0 )); then
+  print -u2 -- 'Zsh: positional input must suppress subcommand suggestions'
+  exit 1
+fi
 printf 'Zsh: %s dispatch checks passed\n' "$checks"

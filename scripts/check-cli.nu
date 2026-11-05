@@ -70,7 +70,22 @@ def main [] {
         error make {msg: $'parse performed unexpected effects on ($target): ($text)'}
       }
     }
-    print $'CLI ($target): 6 process checks passed'
+    for case in [
+      {args: [input.txt other.txt], expected: "callback root: input.txt,other.txt\nreturned from run"}
+      {args: [--trace files a.txt], expected: "trace enabled\ncallback files: a.txt\nreturned from run"}
+      {args: [files --trace a.txt], expected: "trace enabled\ncallback files: a.txt\nreturned from run"}
+    ] {
+      let output = (run-fixture $target $case.args)
+      if $output != $case.expected {
+        error make {msg: $'Root/global execution failed on ($target): ($output)'}
+      }
+    }
+    let failed = (^moon run src/internal/completion_fixture --target $target -- reject | complete)
+    let diagnostic = if $target == 'wasm-gc' { $failed.stdout } else { $failed.stderr }
+    if $failed.exit_code != 1 or not ($diagnostic | str contains 'Rejected') or ($failed.stdout | str contains 'returned from run') {
+      error make {msg: $'Original callback error did not reach the host on ($target): ($failed)'}
+    }
+    print $'CLI ($target): 10 process checks passed'
     check-example $target
   }
 }

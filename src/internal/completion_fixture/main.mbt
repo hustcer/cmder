@@ -1,13 +1,27 @@
 ///|
+suberror FixtureError {
+  Rejected
+}
+
+///|
 // A deterministic command tree consumed by the real-shell integration tests.
-fn main {
+fn main raise {
   let app = @cmder.cli(
     name="cmder-test",
     version="1.2.3",
     options=[
       @cmder.bool("verbose", short='v'),
       @cmder.string("profile", short='p'),
+      @cmder.bool("trace", global=true),
     ],
+    positionals=[@cmder.positional("inputs")],
+    run=ctx => {
+      let inputs = ctx.get_strings("inputs")
+      if inputs == ["reject"] {
+        raise FixtureError::Rejected
+      }
+      println("callback root: \{inputs.join(",")}")
+    },
     commands=[
       @cmder.command(name="db", options=[@cmder.string("region", short='r')], subcommands=[
         @cmder.command(name="inspect", options=[
@@ -23,14 +37,28 @@ fn main {
         positionals=[@cmder.positional("paths")],
         options=[@cmder.bool("force")],
         examples=["cmder-test files a.txt"],
-        run=Some(fn(ctx) {
+        run=ctx => {
+          if ctx.get_bool("trace") {
+            println("trace enabled")
+          }
           println("callback files: \{ctx.get_strings("paths").join(",")}")
-        }),
+        },
       ),
       @cmder.command(name="custom-help", options=[@cmder.string("help")]),
       @cmder.command(name="custom-short", options=[
         @cmder.string("host", short='h'),
       ]),
+      @cmder.command(
+        name="quoting",
+        description="\\';echo cmder-description;# [x]: [y]: 'again' \\",
+        options=[
+          @cmder.string(
+            "value",
+            description="\\';echo cmder-description;# [x]: [y]: 'again' \\",
+          ),
+          @cmder.bool("lines", description="first\nsecond"),
+        ],
+      ),
     ],
   )
   let args = @env.args()
@@ -56,8 +84,8 @@ fn main {
     _ => {
       app.run() catch {
         err => {
-          println(err)
-          return
+          eprintln(err)
+          @env.exit(1)
         }
       }
       println("returned from run")

@@ -1,31 +1,24 @@
 ///|
-fn has_short(opt : OptionDef) -> Bool {
-  opt.short != no_short
-}
-
-///|
 fn build_option_to_flag(opt : OptionDef) -> @argparse.FlagArg {
-  if has_short(opt) {
-    @argparse.FlagArg(opt.name, short=opt.short, about=opt.description)
-  } else {
-    @argparse.FlagArg(opt.name, about=opt.description)
-  }
+  @argparse.FlagArg(
+    opt.name,
+    short?=opt.short,
+    about=opt.description,
+    global=opt.global,
+  )
 }
 
 ///|
 fn build_option_to_option_arg(opt : OptionDef) -> @argparse.OptionArg {
-  let short = if has_short(opt) { Some(opt.short) } else { None }
-  let default_values = match opt.default_value {
-    Some(value) => [value]
-    None => []
-  }
+  let defaults = option_default(opt).map(value => [value]).unwrap_or([])
   @argparse.OptionArg(
     opt.name,
-    short?,
+    short?=opt.short,
     about=opt.description,
-    default_values~,
-    required=option_is_required(opt),
-    allow_hyphen_values=opt.type_ == IntOpt,
+    default_values=defaults,
+    required=opt.required,
+    global=opt.global,
+    allow_hyphen_values=opt.kind is IntOpt(_),
   )
 }
 
@@ -54,55 +47,40 @@ fn command_about(cmd : CommandDef) -> String {
 }
 
 ///|
-fn build_cli_command(app : CliApp) -> @argparse.Command {
-  let flags : Array[@argparse.FlagArg] = []
-  let options : Array[@argparse.OptionArg] = []
-  for opt in app.root_options {
-    match opt.type_ {
-      BoolOpt => flags.push(build_option_to_flag(opt))
-      StringOpt | IntOpt => options.push(build_option_to_option_arg(opt))
-    }
-  }
-  @argparse.Command(
-    app.name,
-    about=app.description,
-    version=app.version,
-    flags~,
-    options~,
-    subcommands=app.commands.map(build_command),
-  )
-}
-
-///|
-/// Converts a command definition into an `argparse.Command`. Explicit examples
-/// are included in its help description; callback execution is not attached.
-///
-/// ```mbt check
-/// test {
-///   let command = @cmder.command(name="greet")
-///   let parser = @cmder.build_command(command)
-///   assert_true(parser.render_help().contains("greet"))
-/// }
-/// ```
-pub fn build_command(cmd : CommandDef) -> @argparse.Command {
+fn build_parser(cmd : CommandDef, version? : String) -> @argparse.Command {
   let flags : Array[@argparse.FlagArg] = []
   let options : Array[@argparse.OptionArg] = []
   for opt in cmd.options {
-    match opt.type_ {
+    match opt.kind {
       BoolOpt => flags.push(build_option_to_flag(opt))
-      StringOpt | IntOpt => options.push(build_option_to_option_arg(opt))
+      StringOpt(_) | IntOpt(_) => options.push(build_option_to_option_arg(opt))
     }
   }
-  let positionals = cmd.positionals.mapi(fn(i, p) {
-    build_positional(p, i == cmd.positionals.length() - 1)
+  let positionals = cmd.positionals.mapi((i, pos) => {
+    build_positional(pos, i == cmd.positionals.length() - 1)
   })
-  let subcommands = cmd.subcommands.map(fn(sub) { build_command(sub) })
+  let subcommands = cmd.subcommands.map(sub => build_parser(sub))
   @argparse.Command(
     cmd.name,
     about=command_about(cmd),
+    version?=version.map(v => v[:]),
     flags~,
     options~,
     positionals~,
     subcommands~,
   )
+}
+
+///|
+fn build_cli_command(app : CliApp) -> @argparse.Command {
+  build_parser(app.root, version=app.version)
+}
+
+///|
+/// Explicit argparse interop. Validates definitions and builds the underlying
+/// parser, without cmder's integer checks or callback execution. Normal consumers
+/// should use CliApp::parse instead.
+pub fn build_command(cmd : CommandDef) -> @argparse.Command raise CliError {
+  validate_definition(cmd, [], [])
+  build_parser(cmd)
 }

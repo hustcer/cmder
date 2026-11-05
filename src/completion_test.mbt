@@ -68,21 +68,25 @@ test "nested completion dispatches to the selected command" {
   let bash = app.render_bash_completion()
   inspect(bash.contains("while (( pos < cword )); do"), content="true")
   inspect(
-    bash.contains("'db') ((pos += 1)); _myapp_root_c0; return ;;"),
+    bash.contains(
+      "if (( !positional_seen )); then _myapp_root_c0; return; fi ;;",
+    ),
     content="true",
   )
   let zsh = app.render_zsh_completion()
   inspect(zsh.contains("while (( pos < CURRENT )); do"), content="true")
   inspect(
-    zsh.contains("'db') ((pos += 1)); _myapp_c0; return ;;"),
+    zsh.contains("if (( !positional_seen )); then _myapp_c0; return; fi ;;"),
     content="true",
   )
   inspect(
-    zsh.contains("'migrate') ((pos += 1)); _myapp_c0_c0; return ;;"),
+    zsh.contains("if (( !positional_seen )); then _myapp_c0_c0; return; fi ;;"),
     content="true",
   )
   inspect(
-    zsh.contains("'up') ((pos += 1)); _myapp_c0_c0_c0; return ;;"),
+    zsh.contains(
+      "if (( !positional_seen )); then _myapp_c0_c0_c0; return; fi ;;",
+    ),
     content="true",
   )
   inspect(zsh.contains("'--target[]:value:'"), content="true")

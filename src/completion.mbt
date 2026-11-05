@@ -19,7 +19,26 @@ fn collect_command_names(commands : Array[CompletionCommand]) -> String {
 
 ///|
 fn escape_single_quote(s : String) -> String {
-  s.replace(old="'", new="'\\''")
+  s.replace_all(old="'", new="'\\''")
+}
+
+///|
+fn escape_fish_description(s : String) -> String {
+  s.replace_all(old="\\", new="\\\\").replace_all(old="'", new="\\'")
+}
+
+///|
+fn escape_zsh_option_description(s : String) -> String {
+  s
+  .replace_all(old="\\", new="\\\\")
+  .replace_all(old="[", new="\\[")
+  .replace_all(old="]", new="\\]")
+  .replace_all(old=":", new="\\:")
+}
+
+///|
+fn escape_zsh_command_description(s : String) -> String {
+  escape_single_quote(s.replace_all(old="\\", new="\\\\"))
 }
 
 ///|
@@ -36,6 +55,7 @@ fn render_shell_scan(
   fn_name : String,
   limit : String,
 ) -> Unit {
+  sb.write_string("  local positional_seen=0\n")
   sb.write_string("  while (( pos < " + limit + " )); do\n")
   sb.write_string("    case \"" + dollar + "{words[pos]}\" in\n")
   sb.write_string("      --) return ;;\n")
@@ -66,9 +86,9 @@ fn render_shell_scan(
     sb.write_string(
       "      '" +
       escape_single_quote(cmd.name) +
-      "') ((pos += 1)); " +
+      "') ((pos += 1)); if (( !positional_seen )); then " +
       sub_fn +
-      "; return ;;\n",
+      "; return; fi ;;\n",
     )
   }
   let has_short_options = options.any(opt => opt.short is Some(_))
@@ -107,7 +127,7 @@ fn render_shell_scan(
       "            *) break ;;\n          esac\n        done ;;\n",
     )
   }
-  sb.write_string("      *) ((pos += 1)) ;;\n")
+  sb.write_string("      *) positional_seen=1; ((pos += 1)) ;;\n")
   sb.write_string("    esac\n  done\n")
 }
 
@@ -121,12 +141,20 @@ fn render_bash_node(
   sb.write_string(fn_name + "() {\n")
   render_shell_scan(sb, options, commands, fn_name, "cword")
   sb.write_string("  (( pos > cword )) && return\n")
-  let candidates = collect_command_names(commands) +
+  sb.write_string(
+    "  local candidates=\"" + collect_option_words(options) + "\"\n",
+  )
+  sb.write_string(
+    "  if (( !positional_seen )); then candidates=\"" +
+    collect_command_names(commands) +
     " " +
-    collect_option_words(options)
+    dollar +
+    "candidates\"; fi\n",
+  )
   sb.write_string(
     "  COMPREPLY=($(compgen -W \"" +
-    candidates +
+    dollar +
+    "candidates" +
     "\" -- \"" +
     dollar +
     "cur\"))\n",
@@ -154,7 +182,7 @@ fn render_bash_node(
 /// ```
 pub fn CliApp::render_bash_completion(self : CliApp) -> String {
   let sb = StringBuilder()
-  let fn_name = "_" + self.name.replace(old="-", new="_")
+  let fn_name = "_" + self.root.name.replace_all(old="-", new="_")
   sb.write_string(fn_name + "() {\n")
   sb.write_string("  COMPREPLY=()\n")
   // Bash splits words at COMP_WORDBREAKS (notably '=' and ':'). Rejoin
@@ -195,10 +223,10 @@ pub fn CliApp::render_bash_completion(self : CliApp) -> String {
   render_bash_node(
     sb,
     fn_name + "_root",
-    completion_options(self.root_options, version=true),
-    completion_commands(self.commands, self.root_options),
+    completion_options(self.root.options, version=true),
+    completion_commands(self.root.subcommands, self.root.options),
   )
-  sb.write_string("complete -F " + fn_name + " " + self.name + "\n")
+  sb.write_string("complete -F " + fn_name + " " + self.root.name + "\n")
   sb.to_string()
 }
 
@@ -214,7 +242,9 @@ fn render_zsh_options(
   }
   sb.write_string("  _arguments \\\n")
   for i, opt in options {
-    let desc = escape_single_quote(opt.description)
+    let desc = escape_single_quote(
+      escape_zsh_option_description(opt.description),
+    )
     let value_spec = if opt.takes_value { ":value:" } else { "" }
     let spellings : Array[String] = []
     if opt.short is Some(short) {
@@ -243,11 +273,11 @@ fn render_zsh_command(
     sb.write_string("  local -a commands\n")
     sb.write_string("  commands=(\n")
     for sub in cmd.subcommands {
-      let desc = escape_single_quote(sub.description)
+      let desc = escape_zsh_command_description(sub.description)
       sb.write_string("    '" + sub.name + ":" + desc + "'\n")
     }
     sb.write_string("  )\n")
-    sb.write_string("  _describe 'command' commands\n")
+    sb.write_string("  (( positional_seen )) || _describe 'command' commands\n")
   }
   if cmd.options.length() > 0 {
     sb.write_string(
@@ -278,28 +308,28 @@ fn render_zsh_command(
 /// ```
 pub fn CliApp::render_zsh_completion(self : CliApp) -> String {
   let sb = StringBuilder()
-  sb.write_string("#compdef " + self.name + "\n\n")
-  let fn_name = "_" + self.name.replace(old="-", new="_")
+  sb.write_string("#compdef " + self.root.name + "\n\n")
+  let fn_name = "_" + self.root.name.replace_all(old="-", new="_")
   sb.write_string(fn_name + "() {\n")
   sb.write_string("  local pos=2\n")
-  let root_options = completion_options(self.root_options, version=true)
-  let commands = completion_commands(self.commands, self.root_options)
+  let root_options = completion_options(self.root.options, version=true)
+  let commands = completion_commands(self.root.subcommands, self.root.options)
   render_shell_scan(sb, root_options, commands, fn_name, "CURRENT")
   sb.write_string("  (( pos > CURRENT )) && return\n")
   sb.write_string("  local -a commands\n")
   sb.write_string("  commands=(\n")
   for cmd in commands {
-    let desc = escape_single_quote(cmd.description)
+    let desc = escape_zsh_command_description(cmd.description)
     sb.write_string("    '" + cmd.name + ":" + desc + "'\n")
   }
   sb.write_string("  )\n")
-  sb.write_string("  _describe 'command' commands\n")
+  sb.write_string("  (( positional_seen )) || _describe 'command' commands\n")
   render_zsh_options(sb, root_options)
   sb.write_string("}\n\n")
   for i, cmd in commands {
     render_zsh_command(sb, cmd, fn_name + "_c" + i.to_string())
   }
-  sb.write_string("compdef " + fn_name + " " + self.name + "\n")
+  sb.write_string("compdef " + fn_name + " " + self.root.name + "\n")
   sb.to_string()
 }
 
@@ -321,7 +351,7 @@ fn render_fish_options(
       line = line + " -s " + short.to_string()
     }
     if opt.description.length() > 0 {
-      line = line + " -d '" + escape_single_quote(opt.description) + "'"
+      line = line + " -d '" + escape_fish_description(opt.description) + "'"
     }
     if opt.takes_value {
       line = line + " -r"
@@ -360,7 +390,13 @@ fn render_fish_states(
   for i, cmd in commands {
     sb.write_string("          case '" + escape_single_quote(cmd.name) + "'\n")
     sb.write_string(
-      "            set state " + state + "_c" + i.to_string() + "\n",
+      "            if test $positional_seen -eq 0\n" +
+      "              set state " +
+      state +
+      "_c" +
+      i.to_string() +
+      "\n" +
+      "            end\n",
     )
   }
   if options.any(opt => opt.short is Some(_)) {
@@ -399,7 +435,9 @@ fn render_fish_states(
       "                case '*'\n                  break\n              end\n            end\n",
     )
   }
-  sb.write_string("        end\n")
+  sb.write_string(
+    "          case '*'\n            set positional_seen 1\n        end\n",
+  )
   for i, cmd in commands {
     render_fish_states(
       sb,
@@ -420,13 +458,14 @@ fn render_fish_node(
   commands : Array[CompletionCommand],
 ) -> Unit {
   let condition = "-n '" + context_fn + " " + state + "'"
+  let command_condition = "-n '" + context_fn + " " + state + " commands'"
   render_fish_options(sb, app_name, condition, options)
   for i, cmd in commands {
-    let desc = escape_single_quote(cmd.description)
+    let desc = escape_fish_description(cmd.description)
     let line = "complete -c " +
       app_name +
       " " +
-      condition +
+      command_condition +
       " -a " +
       "'" +
       escape_single_quote(cmd.name) +
@@ -460,14 +499,17 @@ fn render_fish_node(
 /// ```
 pub fn CliApp::render_fish_completion(self : CliApp) -> String {
   let sb = StringBuilder()
-  sb.write_string("# Fish completions for " + self.name + "\n")
-  let context_fn = "__" + self.name.replace(old="-", new="_") + "_context"
+  sb.write_string("# Fish completions for " + self.root.name + "\n")
+  let context_fn = "__" +
+    self.root.name.replace_all(old="-", new="_") +
+    "_context"
   sb.write_string("function " + context_fn + "\n")
   sb.write_string(
     (
       #|  set -l words (commandline -opc)
       #|  set -l state root
       #|  set -l skip 0
+      #|  set -l positional_seen 0
       #|  for word in $words[2..-1]
       #|    if test $skip -eq 1
       #|      set skip 0
@@ -480,18 +522,28 @@ pub fn CliApp::render_fish_completion(self : CliApp) -> String {
       #|
     ),
   )
-  let root_options = completion_options(self.root_options, version=true)
-  let commands = completion_commands(self.commands, self.root_options)
+  let root_options = completion_options(self.root.options, version=true)
+  let commands = completion_commands(self.root.subcommands, self.root.options)
   render_fish_states(sb, "root", root_options, commands)
   sb.write_string(
     (
       #|    end
+      #|  end
+      #|  if test (count $argv) -ge 2; and test "$argv[2]" = commands; and test $positional_seen -eq 1
+      #|    return 1
       #|  end
       #|  test $skip -eq 0; and test "$state" = "$argv[1]"
       #|end
       #|
     ),
   )
-  render_fish_node(sb, self.name, context_fn, "root", root_options, commands)
+  render_fish_node(
+    sb,
+    self.root.name,
+    context_fn,
+    "root",
+    root_options,
+    commands,
+  )
   sb.to_string()
 }

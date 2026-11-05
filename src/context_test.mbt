@@ -1,113 +1,74 @@
 ///|
-test "get_bool returns flag value" {
-  let flags : Map[String, Bool] = { "verbose": true }
-  let ctx : @cmder.Context = { flags, values: {}, subcommand: None, }
-  inspect(ctx.get_bool("verbose"), content="true")
-  inspect(ctx.get_bool("missing"), content="false")
-}
-
-///|
-test "get_string returns first value" {
-  let values : Map[String, Array[String]] = { "name": ["alice"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  @debug.debug_inspect(ctx.get_string("name"), content="Some(\"alice\")")
-  @debug.debug_inspect(ctx.get_string("missing"), content="None")
-}
-
-///|
-test "get_string_required raises on missing" {
-  let ctx : @cmder.Context = { flags: {}, values: {}, subcommand: None, }
-  let mut raised = false
-  try ctx.get_string_required("name") |> ignore catch {
-    _ => raised = true
+fn context_value(name : String, value : String?) -> @cmder.Context raise {
+  let app = @cmder.cli(name="app", options=[@cmder.string(name)])
+  let argv = match value {
+    Some(value) => ["--\{name}=\{value}"]
+    None => []
   }
-  inspect(raised, content="true")
+  expect_invocation(app.parse(argv~)).context
 }
 
 ///|
-test "get_int parses integer value" {
-  let values : Map[String, Array[String]] = { "count": ["42"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  @debug.debug_inspect(ctx.get_int("count"), content="Some(42)")
-  @debug.debug_inspect(ctx.get_int("missing"), content="None")
+test "get_bool returns a flag and false for absence" {
+  let app = @cmder.cli(name="app", options=[@cmder.bool("verbose")])
+  let ctx = expect_invocation(app.parse(argv=["--verbose"])).context
+  assert_true(ctx.get_bool("verbose"))
+  assert_false(ctx.get_bool("missing"))
 }
 
 ///|
-test "get_int returns None for non-integer" {
-  let values : Map[String, Array[String]] = { "count": ["abc"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  @debug.debug_inspect(ctx.get_int("count"), content="None")
-}
-
-///|
-test "get_int returns None for overflow" {
-  let values : Map[String, Array[String]] = { "n": ["99999999999999999999"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  @debug.debug_inspect(ctx.get_int("n"), content="None")
-}
-
-///|
-test "get_int parses negative" {
-  let values : Map[String, Array[String]] = { "n": ["-42"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  @debug.debug_inspect(ctx.get_int("n"), content="Some(-42)")
-}
-
-///|
-test "get_int_required raises on missing" {
-  let ctx : @cmder.Context = { flags: {}, values: {}, subcommand: None, }
-  let mut raised = false
-  try ctx.get_int_required("port") |> ignore catch {
-    _ => raised = true
+test "string getters distinguish empty values from absence" {
+  let ctx = context_value("name", Some(""))
+  assert_true(ctx.get_string("name") == Some(""))
+  assert_eq(ctx.get_string_required("name"), "")
+  assert_true(ctx.get_string("missing") is None)
+  try ctx.get_string_required("missing") catch {
+    @cmder.CliError::MissingOption("missing") => ()
+    error => raise error
+  } noraise {
+    _ => fail("expected missing value")
   }
-  inspect(raised, content="true")
 }
 
 ///|
-test "get_int_required raises on non-integer" {
-  let values : Map[String, Array[String]] = { "port": ["abc"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  let mut raised = false
-  try ctx.get_int_required("port") |> ignore catch {
-    _ => raised = true
+test "integer getters distinguish absence format and range" {
+  assert_true(context_value("count", None).get_int("count") is None)
+  assert_true(context_value("count", Some("42")).get_int("count") == Some(42))
+  assert_true(context_value("count", Some("-42")).get_int("count") == Some(-42))
+  assert_eq(
+    context_value("count", Some("8080")).get_int_required("count"),
+    8080,
+  )
+  try context_value("count", None).get_int_required("count") catch {
+    @cmder.CliError::MissingOption("count") => ()
+    error => raise error
+  } noraise {
+    _ => fail("expected missing integer")
   }
-  inspect(raised, content="true")
+  try context_value("count", Some("abc")).get_int("count") catch {
+    @cmder.CliError::InvalidInteger("count", "abc") => ()
+    error => raise error
+  } noraise {
+    _ => fail("expected malformed integer")
+  }
+  try
+    context_value("count", Some("2147483648")).get_int_required("count")
+  catch {
+    @cmder.CliError::IntegerOutOfRange("count", "2147483648") => ()
+    error => raise error
+  } noraise {
+    _ => fail("expected overflow")
+  }
 }
 
 ///|
-test "get_int_required returns value" {
-  let values : Map[String, Array[String]] = { "port": ["8080"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  let result = ctx.get_int_required("port") catch { _ => -1 }
-  inspect(result, content="8080")
-}
-
-///|
-test "get_strings returns all values" {
-  let values : Map[String, Array[String]] = { "files": ["a.txt", "b.txt"] }
-  let ctx : @cmder.Context = { flags: {}, values, subcommand: None, }
-  let files = ctx.get_strings("files")
-  inspect(files.length(), content="2")
-  inspect(files[0], content="a.txt")
-}
-
-///|
-test "get_subcommand returns nested context" {
-  let sub_ctx : @cmder.Context = {
-    flags: {},
-    values: { "port": ["8080"] },
-    subcommand: None,
-  }
-  let ctx : @cmder.Context = {
-    flags: {},
-    values: {},
-    subcommand: Some(("serve", sub_ctx)),
-  }
-  match ctx.get_subcommand() {
-    Some((name, sub)) => {
-      inspect(name, content="serve")
-      @debug.debug_inspect(sub.get_string("port"), content="Some(\"8080\")")
-    }
-    None => fail("expected subcommand")
-  }
+test "get_strings returns an independent copy" {
+  let app = @cmder.cli(name="app", positionals=[@cmder.positional("files")])
+  let call = expect_invocation(app.parse(argv=["a.txt", "b.txt"]))
+  let files = call.context.get_strings("files")
+  files[0] = "edited"
+  files.push("extra")
+  assert_eq(call.context.get_strings("files"), ["a.txt", "b.txt"])
+  assert_eq(call.context.get_strings("absent"), [])
+  assert_true(call.context.source_of("files") == Some(@cmder.ValueSource::Argv))
 }

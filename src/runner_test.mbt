@@ -1,14 +1,14 @@
 ///|
-test "descendant default takes precedence over ancestor value" {
+test "child local defaults are independent of ancestor local inputs" {
   let captured = Ref("")
   let app = @cmder.cli(name="app", options=[@cmder.string("mode")], commands=[
     @cmder.command(
       name="go",
-      options=[@cmder.string("mode", default=Some("child"))],
-      run=Some(fn(ctx) { captured.val = ctx.get_string("mode").unwrap_or("") }),
+      options=[@cmder.string("mode", default="child")],
+      run=ctx => captured.val = ctx.get_string("mode").unwrap_or(""),
     ),
   ])
-  app.run(argv=Some(["--mode", "root", "go"]))
+  app.run(argv=["--mode", "root", "go"])
   inspect(captured.val, content="child")
 }
 
@@ -27,16 +27,16 @@ test "cli creates CliApp and run executes command" {
         options=[
           @cmder.string("name", short='n', description="Name", required=true),
         ],
-        run=Some(fn(ctx) {
+        run=ctx => {
           called.val = true
           captured_name.val = ctx.get_string_required("name") catch {
             _ => "error"
           }
-        }),
+        },
       ),
     ],
   )
-  app.run(argv=Some(["greet", "--name", "alice"]))
+  app.run(argv=["greet", "--name", "alice"])
   inspect(called.val, content="true")
   inspect(captured_name.val, content="alice")
 }
@@ -49,10 +49,10 @@ test "cli run with bool flag" {
       name="build",
       description="Build project",
       options=[@cmder.bool("verbose", short='v', description="Verbose")],
-      run=Some(fn(ctx) { was_verbose.val = ctx.get_bool("verbose") }),
+      run=ctx => was_verbose.val = ctx.get_bool("verbose"),
     ),
   ])
-  app.run(argv=Some(["build", "--verbose"]))
+  app.run(argv=["build", "--verbose"])
   inspect(was_verbose.val, content="true")
 }
 
@@ -63,18 +63,16 @@ test "cli run with int option" {
     @cmder.command(
       name="serve",
       description="Start server",
-      options=[
-        @cmder.int("port", short='p', description="Port", default=Some(3000)),
-      ],
-      run=Some(fn(ctx) {
+      options=[@cmder.int("port", short='p', description="Port", default=3000)],
+      run=ctx => {
         port_val.val = match ctx.get_int("port") {
           Some(p) => p
           None => 0
         }
-      }),
+      },
     ),
   ])
-  app.run(argv=Some(["serve", "--port", "8080"]))
+  app.run(argv=["serve", "--port", "8080"])
   inspect(port_val.val, content="8080")
 }
 
@@ -87,49 +85,47 @@ test "cli run with nested subcommand" {
         name="migrate",
         description="Run migrations",
         options=[@cmder.bool("dry-run", description="Dry run")],
-        run=Some(fn(ctx) {
+        run=ctx => {
           result.val = if ctx.get_bool("dry-run") { "dry" } else { "real" }
-        }),
+        },
       ),
     ]),
   ])
-  app.run(argv=Some(["db", "migrate", "--dry-run"]))
+  app.run(argv=["db", "migrate", "--dry-run"])
   inspect(result.val, content="dry")
 }
 
 ///|
-test "callbacks receive ancestor options and closest values win" {
+test "callbacks receive globals while ancestor locals remain isolated" {
   let verbose = Ref(false)
   let region = Ref("")
   let mode = Ref("")
   let app = @cmder.cli(
     name="app",
-    options=[@cmder.bool("verbose"), @cmder.string("mode")],
+    options=[@cmder.bool("verbose", global=true), @cmder.string("mode")],
     commands=[
-      @cmder.command(name="db", options=[@cmder.string("region")], subcommands=[
-        @cmder.command(
-          name="up",
-          options=[@cmder.string("mode")],
-          run=Some(fn(ctx) {
+      @cmder.command(
+        name="db",
+        options=[@cmder.string("region", global=true)],
+        subcommands=[
+          @cmder.command(name="up", options=[@cmder.string("mode")], run=ctx => {
             verbose.val = ctx.get_bool("verbose")
             region.val = ctx.get_string("region").unwrap_or("")
             mode.val = ctx.get_string("mode").unwrap_or("")
           }),
-        ),
-      ]),
+        ],
+      ),
     ],
   )
-  app.run(
-    argv=Some([
-      "--verbose", "--mode", "root", "db", "--region", "west", "up", "--mode", "child",
-    ]),
-  )
+  app.run(argv=[
+    "--verbose", "--mode", "root", "db", "--region", "west", "up", "--mode", "child",
+  ])
   inspect(verbose.val, content="true")
   inspect(region.val, content="west")
   inspect(mode.val, content="child")
-  app.run(argv=Some(["--mode", "root", "db", "up"]))
+  app.run(argv=["--mode", "root", "db", "up"])
   inspect(verbose.val, content="false")
-  inspect(mode.val, content="root")
+  inspect(mode.val, content="")
 }
 
 ///|
@@ -138,25 +134,23 @@ test "integer options accept negative values through the full execution path" {
     opt in [
       @cmder.int("delta"),
       @cmder.int("delta", required=true),
-      @cmder.int("delta", default=Some(1)),
+      @cmder.int("delta", default=1),
       @cmder.int("delta", short='d'),
       @cmder.int("delta", short='d', required=true),
-      @cmder.int("delta", short='d', default=Some(1)),
+      @cmder.int("delta", short='d', default=1),
     ] {
     let captured = Ref(0)
     let app = @cmder.cli(name="app", commands=[
-      @cmder.command(
-        name="go",
-        options=[opt],
-        run=Some(fn(ctx) { captured.val = ctx.get_int("delta").unwrap_or(0) }),
-      ),
+      @cmder.command(name="go", options=[opt], run=ctx => {
+        captured.val = ctx.get_int("delta").unwrap_or(0)
+      }),
     ])
-    app.run(argv=Some(["go", "--delta", "-2147483648"]))
+    app.run(argv=["go", "--delta", "-2147483648"])
     assert_eq(captured.val, -2147483648)
-    app.run(argv=Some(["go", "--delta=-2"]))
+    app.run(argv=["go", "--delta=-2"])
     assert_eq(captured.val, -2)
-    if opt.short == 'd' {
-      app.run(argv=Some(["go", "-d", "-3"]))
+    if opt.short == Some('d') {
+      app.run(argv=["go", "-d", "-3"])
       assert_eq(captured.val, -3)
     }
   }
@@ -165,14 +159,17 @@ test "integer options accept negative values through the full execution path" {
 ///|
 test "negative root options reach nested callbacks" {
   let captured = Ref(0)
-  let app = @cmder.cli(name="app", options=[@cmder.int("delta", short='d')], commands=[
-    @cmder.command(name="db", subcommands=[
-      @cmder.command(
-        name="up",
-        run=Some(fn(ctx) { captured.val = ctx.get_int("delta").unwrap_or(0) }),
-      ),
-    ]),
-  ])
-  app.run(argv=Some(["-d", "-1", "db", "up"]))
+  let app = @cmder.cli(
+    name="app",
+    options=[@cmder.int("delta", short='d', global=true)],
+    commands=[
+      @cmder.command(name="db", subcommands=[
+        @cmder.command(name="up", run=ctx => {
+          captured.val = ctx.get_int("delta").unwrap_or(0)
+        }),
+      ]),
+    ],
+  )
+  app.run(argv=["-d", "-1", "db", "up"])
   assert_eq(captured.val, -1)
 }

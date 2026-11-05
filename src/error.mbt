@@ -4,6 +4,9 @@
 #derive(Debug)
 pub(all) suberror CliError {
   ParseError(String)
+  InvalidDefinition(String)
+  UnknownArgument(String)
+  InvalidOverride(String, String)
   MissingCommand
   UnknownCommand(Array[String])
   MissingSubcommand(String, Array[String])
@@ -31,6 +34,9 @@ pub extend CliError with Show::{output, to_string}
 pub fn CliError::message(self : CliError) -> String {
   match self {
     ParseError(message) => message
+    InvalidDefinition(message) => "invalid CLI definition: \{message}"
+    UnknownArgument(name) => "unknown argument: \{name}"
+    InvalidOverride(name, reason) => "invalid override for '\{name}': \{reason}"
     MissingCommand => "no command specified. Use --help for usage."
     UnknownCommand(path) => "unknown command: \{path.join(" ")}"
     MissingSubcommand(command, available) =>

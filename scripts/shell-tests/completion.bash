@@ -27,7 +27,7 @@ check '' cache inspect --db
 check '--db-only' --profile cache db inspect --db
 check '--db-only' --profile=cache db inspect --db
 test_line='cmder-test --profile=cache db inspect --db' check '--db-only' --profile = cache db inspect --db
-test_line='cmder-test --profile=cache ' check 'db cache files custom-help custom-short help --verbose -v --profile -p --help -h --version -V' --profile = cache ''
+test_line='cmder-test --profile=cache ' check 'db cache files custom-help custom-short quoting help --verbose -v --profile -p --trace --help -h --version -V' --profile = cache ''
 test_line='cmder-test --profile=cache:db db inspect --db' check '--db-only' --profile = cache : db db inspect --db
 check '--db-only' --profile = db inspect --db
 check '--db-only' --profile "'cache db'" db inspect --db
@@ -54,4 +54,12 @@ check '' custom-help --help ''
 check '-h' custom-help -h
 check '--help' custom-short --hel
 check '' custom-short -h ''
+check '--trace' --tr
+check '--trace' db inspect --tr
+check '--trace' files --tr
+check '--db-only' --trace db inspect --db
+check '--value' quoting --val
+check '' input.txt fi
+check '' input.txt files --f
+check '--trace' input.txt --tr
 printf 'Bash: %s behavior checks passed\n' "$checks"

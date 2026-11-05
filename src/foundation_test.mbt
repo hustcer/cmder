@@ -1,7 +1,7 @@
 ///|
 test "execution errors have display-ready messages" {
   let app = @cmder.cli(name="app")
-  try app.run(argv=Some([])) catch {
+  try app.run(argv=[]) catch {
     err =>
       assert_eq(err.to_string(), "no command specified. Use --help for usage.")
   } noraise {

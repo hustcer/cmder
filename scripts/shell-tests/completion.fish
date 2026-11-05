@@ -1,4 +1,8 @@
-source "$CMDER_COMPLETION_FILE"
+source "$CMDER_COMPLETION_FILE" > "$CMDER_COMPLETION_FILE.source-output"; or exit 1
+if test -s "$CMDER_COMPLETION_FILE.source-output"
+    printf 'Fish: sourcing completion produced unexpected output\n' >&2
+    exit 1
+end
 set -g checks 0
 function check
     set -l expected $argv[1]
@@ -12,11 +16,11 @@ function check
     end
     set -g checks (math $checks + 1)
 end
-check '--help --profile --verbose --version' 'cmder-test --'
+check '--help --profile --trace --verbose --version' 'cmder-test --'
 check '--verbose --version' 'cmder-test --v'
 check --profile 'cmder-test --p'
-check '--db-only --format --help' 'cmder-test db inspect --'
-check '--cache-only --help' 'cmder-test cache inspect --'
+check '--db-only --format --help --trace' 'cmder-test db inspect --'
+check '--cache-only --help --trace' 'cmder-test cache inspect --'
 check --db-only 'cmder-test --profile cache db inspect --db'
 check --db-only 'cmder-test --profile=cache db inspect --db'
 check --db-only 'cmder-test -vp cache db inspect --db'
@@ -36,9 +40,25 @@ check '' 'cmder-test help db inspect --db'
 check '' 'cmder-test custom-help --help --h'
 check --help 'cmder-test custom-short --hel'
 check '' 'cmder-test custom-short -h --h'
+check --trace 'cmder-test --tr'
+check --trace 'cmder-test db inspect --tr'
+check --trace 'cmder-test files --tr'
+check --db-only 'cmder-test --trace db inspect --db'
+check --value 'cmder-test quoting --val'
+check quoting 'cmder-test qu'
+check '' 'cmder-test input.txt fi'
+check '' 'cmder-test input.txt files --f'
+check --trace 'cmder-test input.txt --tr'
 set -l topics (complete -C 'cmder-test help db i' | string replace -r '\t.*$' '')
 if not contains -- inspect $topics
     printf 'Fish: help topics did not follow the command hierarchy\n' >&2
+    exit 1
+end
+set -g checks (math $checks + 1)
+set -l value_description (complete -C 'cmder-test quoting --val' | string replace -r '^--value\t' '')
+set -l expected "\\';echo cmder-description;# [x]: [y]: 'again' \\"
+if test "$value_description" != "$expected"
+    printf 'Fish: option description did not round-trip through completion\n' >&2
     exit 1
 end
 set -g checks (math $checks + 1)

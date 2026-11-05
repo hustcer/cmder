@@ -1,61 +1,42 @@
 ///|
-test "string() creates StringOpt OptionDef" {
-  let opt = @cmder.string(
+test "string options retain typed defaults and normalized required metadata" {
+  let required = @cmder.string(
     "name",
     short='n',
     description="User name",
     required=true,
   )
-  inspect(opt.name, content="name")
-  inspect(opt.type_, content="StringOpt")
-  inspect(
-    opt.short,
-    content=(
-      #|n
-    ),
-  )
-  inspect(opt.required, content="true")
-  @debug.debug_inspect(opt.default_value, content="None")
-}
-
-///|
-test "string() with default value" {
-  let opt = @cmder.string(
+  assert_eq(required.name, "name")
+  assert_true(required.short == Some('n'))
+  assert_true(required.required)
+  assert_false(required.global)
+  assert_true(required.kind == @cmder.OptionKind::StringOpt(None))
+  let defaulted = @cmder.string(
     "output",
-    description="Output path",
-    default=Some("stdout"),
-  )
-  @debug.debug_inspect(opt.default_value, content="Some(\"stdout\")")
-  inspect(opt.required, content="false")
-}
-
-///|
-test "bool() creates BoolOpt OptionDef" {
-  let opt = @cmder.bool("verbose", short='v', description="Verbose output")
-  inspect(opt.type_, content="BoolOpt")
-  inspect(opt.required, content="false")
-}
-
-///|
-test "int() creates IntOpt OptionDef" {
-  let opt = @cmder.int(
-    "count",
-    short='c',
-    description="Repeat count",
-    default=Some(3),
-  )
-  inspect(opt.type_, content="IntOpt")
-  @debug.debug_inspect(opt.default_value, content="Some(\"3\")")
-}
-
-///|
-test "int() required" {
-  let opt = @cmder.int(
-    "port",
-    short='p',
-    description="Port number",
+    default="stdout",
     required=true,
+    global=true,
   )
-  inspect(opt.required, content="true")
-  @debug.debug_inspect(opt.default_value, content="None")
+  assert_false(defaulted.required)
+  assert_true(defaulted.global)
+  assert_true(defaulted.short is None)
+  assert_true(defaulted.kind == @cmder.OptionKind::StringOpt(Some("stdout")))
+}
+
+///|
+test "integer options store integers instead of stringified defaults" {
+  let required = @cmder.int("port", required=true)
+  assert_true(required.required)
+  assert_true(required.kind == @cmder.OptionKind::IntOpt(None))
+  let defaulted = @cmder.int("count", short='c', default=3, required=true)
+  assert_false(defaulted.required)
+  assert_true(defaulted.kind == @cmder.OptionKind::IntOpt(Some(3)))
+}
+
+///|
+test "boolean definitions have no required or default payload" {
+  let option = @cmder.bool("quiet", short='q', global=true)
+  assert_true(option.kind == @cmder.OptionKind::BoolOpt)
+  assert_false(option.required)
+  assert_true(option.global)
 }

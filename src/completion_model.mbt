@@ -18,7 +18,7 @@ priv struct CompletionCommand {
 
 ///|
 fn builtin_completion_options(
-  options : Array[OptionDef],
+  options : ArrayView[OptionDef],
   version : Bool,
 ) -> Array[CompletionOption] {
   let builtins : Array[CompletionOption] = []
@@ -28,7 +28,7 @@ fn builtin_completion_options(
     } else {
       Some(name)
     }
-    let short = if options.any(opt => opt.short == short) {
+    let short = if options.iter().any(opt => opt.short == Some(short)) {
       None
     } else {
       Some(short)
@@ -46,25 +46,21 @@ fn builtin_completion_options(
 
 ///|
 fn completion_options(
-  options : Array[OptionDef],
+  options : ArrayView[OptionDef],
   version~ : Bool = false,
 ) -> Array[CompletionOption] {
   let projected = options.map(opt => CompletionOption::{
     long: Some(opt.name),
-    short: if has_short(opt) {
-      Some(opt.short)
-    } else {
-      None
-    },
+    short: opt.short,
     description: opt.description,
-    takes_value: opt.type_ != BoolOpt,
+    takes_value: opt.kind != BoolOpt,
   })
   projected + builtin_completion_options(options, version)
 }
 
 ///|
 fn completion_help_targets(
-  commands : Array[CommandDef],
+  commands : ArrayView[CommandDef],
   help_options : Array[CompletionOption],
 ) -> Array[CompletionCommand] {
   commands.map(cmd => CompletionCommand::{
@@ -77,19 +73,28 @@ fn completion_help_targets(
 
 ///|
 fn completion_commands(
-  commands : Array[CommandDef],
-  options : Array[OptionDef],
+  commands : ArrayView[CommandDef],
+  options : ArrayView[OptionDef],
+  inherited~ : ArrayView[OptionDef] = [],
 ) -> Array[CompletionCommand] {
+  let globals = inherited.to_owned() + options.filter(opt => opt.global)
   let projected = commands.map(cmd => CompletionCommand::{
     name: cmd.name,
     description: cmd.description,
-    options: completion_options(cmd.options),
-    subcommands: completion_commands(cmd.subcommands, cmd.options),
+    options: completion_options(globals + cmd.options[:].to_owned()),
+    subcommands: completion_commands(
+      cmd.subcommands,
+      cmd.options,
+      inherited=globals,
+    ),
   })
   if !commands.is_empty() {
     // `help` traverses command names, not application options. Its optional
     // trailing help flags belong to the command where the help verb occurred.
-    let help_options = builtin_completion_options(options, false)
+    let help_options = builtin_completion_options(
+      inherited.to_owned() + options.to_owned(),
+      false,
+    )
     projected.push({
       name: "help",
       description: "Print help for the subcommand(s).",

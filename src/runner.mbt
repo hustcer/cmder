@@ -1,13 +1,6 @@
 ///|
-/// Defines a positional argument. The final positional accepts multiple values;
-/// earlier positionals accept at most one. Declare required arguments first.
-///
-/// ```mbt check
-/// test {
-///   let file = @cmder.positional("file", required=true)
-///   assert_true(file.required)
-/// }
-/// ```
+/// Defines a local positional argument. The final positional accepts multiple
+/// values; earlier positionals accept at most one. Declare required ones first.
 pub fn positional(
   name : String,
   description~ : String = "",
@@ -17,118 +10,114 @@ pub fn positional(
 }
 
 ///|
-/// Defines a command with options, positionals, subcommands, and a callback.
+/// Defines an immutable command. Input collections are copied. Callback errors
+/// propagate unchanged to the application host.
 ///
 /// ```mbt check
 /// test {
-///   let greet = @cmder.command(name="greet", options=[@cmder.string("name")])
-///   inspect(greet.name, content="greet")
+///   let cmd = @cmder.command(name="go", run=_ => ())
+///   inspect(cmd.name, content="go")
 /// }
 /// ```
 pub fn command(
   name~ : String,
   description~ : String = "",
-  options~ : Array[OptionDef] = [],
-  positionals~ : Array[PositionalDef] = [],
-  examples~ : Array[String] = [],
-  subcommands~ : Array[CommandDef] = [],
-  run~ : ((Context) -> Unit)? = None,
+  options~ : ArrayView[OptionDef] = [],
+  positionals~ : ArrayView[PositionalDef] = [],
+  examples~ : ArrayView[String] = [],
+  subcommands~ : ArrayView[CommandDef] = [],
+  run? : (Context) -> Unit raise,
 ) -> CommandDef {
-  { name, description, options, positionals, examples, subcommands, run, }
+  {
+    name,
+    description,
+    options: ReadOnlyArray::from_array(options),
+    positionals: ReadOnlyArray::from_array(positionals),
+    examples: ReadOnlyArray::from_array(examples),
+    subcommands: ReadOnlyArray::from_array(subcommands),
+    run,
+  }
 }
 
 ///|
-/// Creates an application. Ancestor values are available to callbacks;
-/// values at a descendant level, including defaults, take precedence by name.
+/// Builds and validates an immutable application. Root commands support the
+/// same options, positionals, examples and raising callbacks as subcommands.
+/// Only explicitly global options are shared with descendants.
 ///
 /// ```mbt check
 /// test {
-///   let app = @cmder.cli(name="demo", commands=[@cmder.command(name="hello")])
-///   inspect(app.name, content="demo")
+///   let count = Ref(0)
+///   let app = @cmder.cli(name="demo", options=[@cmder.int("count", default=2)], run=ctx => {
+///     count.val = ctx.get_int_required("count")
+///   })
+///   app.run(argv=[])
+///   assert_eq(count.val, 2)
 /// }
 /// ```
 pub fn cli(
   name~ : String,
   version~ : String = "0.0.0",
   description~ : String = "",
-  options~ : Array[OptionDef] = [],
-  commands~ : Array[CommandDef] = [],
-) -> CliApp {
-  { name, version, description, root_options: options, commands, }
+  options~ : ArrayView[OptionDef] = [],
+  positionals~ : ArrayView[PositionalDef] = [],
+  examples~ : ArrayView[String] = [],
+  commands~ : ArrayView[CommandDef] = [],
+  run? : (Context) -> Unit raise,
+) -> CliApp raise CliError {
+  let root = command(
+    name~,
+    description~,
+    options~,
+    positionals~,
+    examples~,
+    subcommands=commands,
+    run?,
+  )
+  validate_definition(root, [], [])
+  { root, version, }
 }
 
 ///|
-fn find_command_def(commands : Array[CommandDef], name : String) -> CommandDef? {
-  for cmd in commands {
-    if cmd.name == name {
-      return Some(cmd)
-    }
-  }
-  None
+fn find_command_def(
+  commands : ArrayView[CommandDef],
+  name : String,
+) -> CommandDef? {
+  commands.iter().find_first(cmd => cmd.name == name)
 }
 
 ///|
-fn inherit_context(parent : Context, child : Context) -> Context {
-  let flags = parent.flags.copy()
-  let values = parent.values.copy()
-  for name, value in child.flags {
-    values.remove(name)
-    flags[name] = value
-  }
-  for name, value in child.values {
-    flags.remove(name)
-    values[name] = value
-  }
-  { flags, values, subcommand: child.subcommand, }
-}
-
-///|
-/// Executes only the selected command's callback using the invocation's current
-/// context. This method does not parse arguments, validate types, or perform
-/// help/version I/O; callbacks retain their own effects. Resolve the path against
-/// this application's current definitions, not a definition snapshot. The caller
-/// is responsible for pairing the invocation with compatible definitions.
-/// Prefer parsing and dispatching on the same application, completing any host
-/// edits and checks before dispatch.
-/// Empty roots, unknown paths, missing subcommands, and missing handlers raise
-/// the corresponding CliError before any callback executes. Repeated calls
-/// deliberately execute the callback again.
+/// Executes the command bound during parsing with this invocation's context.
+/// It performs no parsing, output or process exit. Callback errors propagate
+/// unchanged. Each call deliberately executes again. Host overrides must be
+/// applied with with_overrides, which returns another validated invocation.
 ///
 /// ```mbt check
 /// test {
 ///   let called = Ref(false)
-///   let app = @cmder.cli(name="demo", commands=[
-///     @cmder.command(name="go", run=Some(fn(_) { called.val = true })),
-///   ])
-///   guard app.parse(argv=["go"]) is Parsed(call) else {
-///     fail("expected arguments")
-///   }
+///   let app = @cmder.cli(name="demo", run=_ => called.val = true)
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
 ///   assert_false(called.val)
-///   app.dispatch(call)
+///   call.dispatch()
 ///   assert_true(called.val)
 /// }
 /// ```
-pub fn CliApp::dispatch(
-  self : CliApp,
-  invocation : Invocation,
-) -> Unit raise CliError {
-  if invocation.command_path.is_empty() {
-    raise CliError::MissingCommand
-  }
-  guard find_command_path(self.commands, invocation.command_path) is Some(cmd) else {
-    raise CliError::UnknownCommand(invocation.command_path)
-  }
-  match cmd.run {
-    Some(callback) => callback(invocation.context)
-    None =>
-      if cmd.subcommands.is_empty() {
-        raise CliError::MissingHandler(cmd.name)
-      } else {
-        raise CliError::MissingSubcommand(
-          cmd.name,
-          cmd.subcommands.map(c => c.name),
-        )
+pub fn Invocation::dispatch(self : Invocation) -> Unit raise {
+  match self.selected.run {
+    Some(callback) => callback(self.context)
+    None => {
+      if self.command_path.is_empty() {
+        raise CliError::MissingCommand
       }
+      if self.selected.subcommands.is_empty() {
+        raise CliError::MissingHandler(self.selected.name)
+      }
+      raise CliError::MissingSubcommand(
+        self.selected.name,
+        [
+          for cmd in self.selected.subcommands => cmd.name
+        ],
+      )
+    }
   }
 }
 
@@ -151,36 +140,13 @@ fn process_argv() -> ArrayView[String] {
 }
 
 ///|
-/// Parses arguments and executes the selected command's callback.
-/// Omit `argv` to read process arguments. Help and version print and exit with
-/// status 0, preserving the convenience API. Use parse for side-effect-free
-/// handling. Callback signatures and closest-value precedence are unchanged.
-/// Parse failures raise CliError::ParseError with the original diagnostic;
-/// missing command, subcommand, or callback errors have distinct CliError cases.
-/// Set validate_types=true for the same opt-in integer validation as parse;
-/// invalid values raise their typed CliError before any callback executes.
-///
-/// ```mbt check
-/// test {
-///   let called = Ref(false)
-///   let app = @cmder.cli(name="demo", commands=[
-///     @cmder.command(name="go", run=Some(fn(_) { called.val = true })),
-///   ])
-///   app.run(argv=Some(["go"]))
-///   assert_true(called.val)
-/// }
-/// ```
-pub fn CliApp::run(
-  self : CliApp,
-  argv~ : Array[String]? = None,
-  validate_types~ : Bool = false,
-) -> Unit raise {
-  let args = match argv {
-    Some(args) => args[:]
-    None => process_argv()
-  }
-  match self.parse(argv=args, validate_types~) {
-    Parsed(invocation) => self.dispatch(invocation)
+/// Parses and dispatches, propagating parser and original callback errors.
+/// Omit argv to use process arguments. Help and version print and exit with
+/// status zero. Embedded hosts can use parse and Invocation::dispatch instead.
+pub fn CliApp::run(self : CliApp, argv? : ArrayView[String]) -> Unit raise {
+  let args = argv.unwrap_or_else(process_argv)
+  match self.parse(argv=args) {
+    Parsed(call) => call.dispatch()
     Help(text) | Version(text) => {
       println(text)
       @env.exit(0)

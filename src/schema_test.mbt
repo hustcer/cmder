@@ -9,7 +9,7 @@ test "render_schema outputs JSON for simple command" {
         required=true,
       ),
       @cmder.bool("verbose", short='v', description="Verbose output"),
-      @cmder.int("count", description="Repeat count", default=Some(3)),
+      @cmder.int("count", description="Repeat count", default=3),
     ]),
   ])
   let schema = app.render_schema()
@@ -23,7 +23,7 @@ test "render_schema outputs JSON for simple command" {
   inspect(schema.contains("\"type\":\"bool\""), content="true")
   inspect(schema.contains("\"style\":\"flag\""), content="true")
   inspect(schema.contains("\"type\":\"int\""), content="true")
-  inspect(schema.contains("\"default\":\"3\""), content="true")
+  inspect(schema.contains("\"default\":3"), content="true")
   inspect(schema.contains("\"short\":\"n\""), content="true")
 }
 
@@ -55,7 +55,7 @@ test "render_schema auto-generates examples when not provided" {
       options=[
         @cmder.string("name", short='n', description="Name", required=true),
         @cmder.bool("loud", short='l', description="Loud"),
-        @cmder.int("count", short='c', description="Count", default=Some(1)),
+        @cmder.int("count", short='c', description="Count", default=1),
       ],
       // no examples provided
     ),
@@ -138,7 +138,7 @@ test "generated nested example includes required ancestor arguments" {
         name="db",
         options=[@cmder.string("region", required=true)],
         subcommands=[
-          @cmder.command(name="up", run=Some(fn(_) { () }), positionals=[
+          @cmder.command(name="up", run=_ => (), positionals=[
             @cmder.positional("version", required=true),
           ]),
         ],
@@ -151,7 +151,7 @@ test "generated nested example includes required ancestor arguments" {
     .contains("app --profile <profile> db --region <region> up <version>"),
     content="true",
   )
-  app.run(argv=Some(["--profile", "p", "db", "--region", "r", "up", "1"]))
+  app.run(argv=["--profile", "p", "db", "--region", "r", "up", "1"])
 }
 
 ///|

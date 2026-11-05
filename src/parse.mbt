@@ -1,11 +1,10 @@
 ///|
-/// Origin of the effective argument value, matching argparse's source model.
-/// Current definitions use Argv and Default; no process environment is read.
 #derive(Debug, Eq)
 pub(all) enum ValueSource {
   Argv
   Env
   Default
+  Override
 }
 
 ///|
@@ -15,142 +14,150 @@ pub extend ValueSource with Debug::{to_repr}
 pub extend ValueSource with Eq::{equal, not_equal}
 
 ///|
-/// A parsed command without callback execution. The path excludes the application
-/// name; an empty path selects the root. Context contains the selected command's
-/// effective values, including ancestors, with the existing closest-value rules.
-/// Its subcommand is None. Sources describe this parse snapshot; editing Context
-/// afterwards does not change the recorded provenance.
-pub struct Invocation {
-  command_path : Array[String]
-  context : Context
-  priv sources : Map[String, ValueSource]
+/// Host-supplied values. Text can also supply a checked raw integer spelling.
+/// Positionals accepts a read-only list; with_overrides copies its contents.
+pub(all) enum ArgumentValue {
+  Text(String)
+  Integer(Int32)
+  Flag(Bool)
+  Positionals(ReadOnlyArray[String])
 }
 
 ///|
-/// The complete result of explicit argument parsing, without I/O or process exit.
-/// Parsed does not require a callback; the host decides how to execute it.
+priv enum ArgumentSpec {
+  Option(OptionDef)
+  Positional(PositionalDef, multiple~ : Bool)
+}
+
+///|
+/// Immutable result bound to the selected command snapshot. Context contains
+/// only the selected command's locals and inherited globals. Raw argv spelling
+/// and effective value provenance are preserved. Use with_overrides for edits.
+pub struct Invocation {
+  command_path : ReadOnlyArray[String]
+  context : Context
+  priv selected : CommandDef
+  priv specs : Map[String, ArgumentSpec]
+}
+
+///|
 pub(all) enum ParseOutcome {
-  /// Effective values for the selected command, without running a callback.
   Parsed(Invocation)
-  /// Display-ready help, including explicitly declared examples.
   Help(String)
-  /// The application's version text, without an added trailing newline.
   Version(String)
-  /// A parser or definition diagnostic. No error has been printed or raised.
   Failed(CliError)
 }
 
 ///|
-/// Returns the source of an effective value, or None when absent. A descendant
-/// default shadows an ancestor argv value, just as it does in the callback API.
-///
-/// ```mbt check
-/// test {
-///   let app = @cmder.cli(name="app", options=[
-///     @cmder.int("count", default=Some(1)),
-///   ])
-///   guard app.parse(argv=[]) is Parsed(call) else { fail("expected arguments") }
-///   assert_true(call.source_of("count") == Some(@cmder.ValueSource::Default))
-/// }
-/// ```
+/// Returns the effective source, or None for an absent value.
 pub fn Invocation::source_of(self : Invocation, name : String) -> ValueSource? {
-  self.sources.get(name)
+  self.context.source_of(name)
 }
 
 ///|
-/// True only when the effective value came from argv, including explicit empty
-/// strings. Defaults, environment values, and absent flags are not explicit.
-///
-/// ```mbt check
-/// test {
-///   let app = @cmder.cli(name="app", options=[@cmder.string("name")])
-///   guard app.parse(argv=["--name="]) is Parsed(call) else {
-///     fail("expected arguments")
-///   }
-///   assert_true(call.was_provided("name"))
-/// }
-/// ```
+/// True when the current effective value came from argv. Host overrides use
+/// Override provenance, even when their value equals the original argv value.
 pub fn Invocation::was_provided(self : Invocation, name : String) -> Bool {
   self.source_of(name) is Some(Argv)
 }
 
 ///|
-fn invocation_from_matches(matches : @argparse.Matches) -> Invocation {
-  let command_path : Array[String] = []
-  let sources : Map[String, ValueSource] = Map([])
+fn validate_scope_types(
+  cmd : CommandDef,
+  matches : @argparse.Matches,
+) -> Unit raise CliError {
+  for option in cmd.options {
+    if option.kind is IntOpt(_) {
+      for value in matches.values.get(option.name).unwrap_or([]) {
+        ignore(parse_integer_value(option.name, value))
+      }
+    }
+  }
+}
+
+///|
+fn invocation_from_matches(
+  app : CliApp,
+  matches : @argparse.Matches,
+) -> Invocation raise CliError {
+  let path : Array[String] = []
+  let globals : Array[OptionDef] = []
+  let mut selected = app.root
   let mut current = matches
-  let mut context : Context = { flags: {}, values: {}, subcommand: None, }
   while true {
-    context = inherit_context(context, {
-      flags: current.flags,
-      values: current.values,
-      subcommand: None,
-    })
-    for name, source in current.sources {
+    validate_scope_types(selected, current)
+    guard current.subcommand is Some((name, child)) else { break }
+    for option in selected.options {
+      if option.global {
+        globals.push(option)
+      }
+    }
+    path.push(name)
+    guard find_command_def(selected.subcommands, name) is Some(command) else {
+      raise CliError::UnknownCommand(path)
+    }
+    selected = command
+    current = child
+  }
+  let specs : Map[String, ArgumentSpec] = Map([])
+  for option in globals {
+    specs[option.name] = Option(option)
+  }
+  for option in selected.options {
+    specs[option.name] = Option(option)
+  }
+  for index, pos in selected.positionals {
+    specs[pos.name] = Positional(
+      pos,
+      multiple=index == selected.positionals.length() - 1,
+    )
+  }
+  let flags : Map[String, Bool] = Map([])
+  let values : Map[String, Array[String]] = Map([])
+  let sources : Map[String, ValueSource] = Map([])
+  for name, _ in specs {
+    if current.flags.get(name) is Some(value) {
+      flags[name] = value
+    }
+    if current.values.get(name) is Some(value) {
+      values[name] = value.copy()
+    }
+    if current.sources.get(name) is Some(source) {
       sources[name] = match source {
         @argparse.ValueSource::Argv => Argv
         @argparse.ValueSource::Env => Env
         @argparse.ValueSource::Default => Default
       }
     }
-    match current.subcommand {
-      Some((name, child)) => {
-        command_path.push(name)
-        current = child
-      }
-      None => break
-    }
   }
-  { command_path, context, sources, }
+  {
+    command_path: ReadOnlyArray::from_array(path),
+    context: { flags, values, sources, },
+    selected,
+    specs,
+  }
 }
 
 ///|
-/// Parses explicit argv, excluding the executable name, without printing,
-/// exiting, reading process state, or invoking callbacks. Integer conversion
-/// remains lazy; use get_int_checked to distinguish invalid values from absence.
-/// With validate_types=true, check integer syntax and Int32 overflow at each
-/// selected command scope before inheritance, including defaults and values
-/// later shadowed by descendants. Unselected commands are not checked. Help and
-/// version retain parser precedence and bypass type validation. No application
-/// ranges are imposed. Raw strings and provenance are preserved; legacy get_int
-/// still has its digit-length cap. Validation is a parse-time check, not a
-/// guarantee about a context the caller subsequently mutates.
-/// Inherited values are checked against their owning definitions; successful
-/// validation does not certify the merged context against the selected command's
-/// option types.
+/// Parses explicit argv without process I/O or callbacks. All declared integer
+/// inputs in selected scopes are checked for signed decimal Int32 syntax and
+/// overflow. Help/version and structural parser failures retain precedence.
 ///
 /// ```mbt check
 /// test {
-///   let app = @cmder.cli(name="app", version="1.2.3")
-///   guard app.parse(argv=["--version"]) is Version(version) else {
-///     fail("expected version")
-///   }
-///   inspect(version, content="1.2.3")
-/// }
-///
-/// test {
 ///   let app = @cmder.cli(name="app", options=[@cmder.int("count")])
-///   assert_true(app.parse(argv=["--count", "bad"]) is Parsed(_))
 ///   assert_true(
-///     app.parse(argv=["--count", "bad"], validate_types=true)
+///     app.parse(argv=["--count", "bad"])
 ///     is Failed(@cmder.CliError::InvalidInteger("count", "bad")),
 ///   )
 /// }
 /// ```
-pub fn CliApp::parse(
-  self : CliApp,
-  argv~ : ArrayView[String],
-  validate_types~ : Bool = false,
-) -> ParseOutcome {
+pub fn CliApp::parse(self : CliApp, argv~ : ArrayView[String]) -> ParseOutcome {
   match build_cli_command(self).parse_outcome(argv~) {
-    Parsed(matches) => {
-      if validate_types {
-        validate_match_types(self, matches) catch {
-          error => return Failed(error)
-        }
+    Parsed(matches) =>
+      Parsed(invocation_from_matches(self, matches)) catch {
+        error => Failed(error)
       }
-      Parsed(invocation_from_matches(matches))
-    }
     Help(text) => Help(text)
     Version(text) => Version(text)
     Failed(error) => Failed(CliError::ParseError(error.to_string()))
@@ -158,61 +165,69 @@ pub fn CliApp::parse(
 }
 
 ///|
-// Validate each value against its owning scope, before same-name values merge.
-fn validate_match_types(
-  app : CliApp,
-  matches : @argparse.Matches,
-) -> Unit raise CliError {
-  let mut options = app.root_options
-  let mut commands = app.commands
-  let mut current = matches
-  let path : Array[String] = []
-  while true {
-    for option in options {
-      if option.type_ == IntOpt {
-        for value in current.values.get(option.name).unwrap_or([]) {
-          ignore(parse_integer_value(option.name, value))
-        }
-      }
-    }
-    guard current.subcommand is Some((name, child)) else { break }
-    path.push(name)
-    guard find_command_def(commands, name) is Some(command) else {
-      raise CliError::UnknownCommand(path)
-    }
-    options = command.options
-    commands = command.subcommands
-    current = child
-  }
-}
-
-///|
-fn find_command_path(
-  commands : Array[CommandDef],
-  path : ArrayView[String],
-) -> CommandDef? {
-  guard path is [name, .. rest] else { return None }
-  guard find_command_def(commands, name) is Some(command) else { return None }
-  if rest.is_empty() {
-    Some(command)
-  } else {
-    find_command_path(command.subcommands, rest)
-  }
-}
-
-///|
-/// Renders root or nested command help without parsing argv or running callbacks.
-/// The path excludes the executable name. Unknown paths raise UnknownCommand;
-/// descriptions, options, positionals, and explicit examples come from the same
-/// command definition used by run and parse. Like argparse's render_help, this
-/// renders definitions without validating whether they are executable.
+/// Applies host overrides atomically and returns a fresh validated invocation.
+/// Unknown names, incompatible kinds and invalid positional cardinality raise
+/// CliError. Unchanged values preserve their sources; changed values use Override.
+/// Clearing an optional positional makes it absent, with no effective source.
 ///
 /// ```mbt check
 /// test {
-///   let app = @cmder.cli(name="app", commands=[@cmder.command(name="go")])
-///   assert_true(app.render_help(command_path=["go"]).contains("Usage: app go"))
+///   let app = @cmder.cli(name="app", options=[@cmder.int("count", default=1)])
+///   guard app.parse(argv=[]) is Parsed(call) else { fail("parse") }
+///   let edited = call.with_overrides({ "count": @cmder.ArgumentValue::Integer(3) })
+///   assert_true(edited.context.get_int("count") == Some(3))
+///   assert_true(call.context.get_int("count") == Some(1))
+///   assert_true(edited.source_of("count") == Some(@cmder.ValueSource::Override))
 /// }
 /// ```
+pub fn Invocation::with_overrides(
+  self : Invocation,
+  overrides : Map[String, ArgumentValue],
+) -> Invocation raise CliError {
+  let flags = self.context.flags.copy()
+  let values = self.context.values.copy()
+  let sources = self.context.sources.copy()
+  for name, value in overrides {
+    guard self.specs.get(name) is Some(spec) else {
+      raise CliError::UnknownArgument(name)
+    }
+    match (spec, value) {
+      (Option({ kind: BoolOpt, .. }), Flag(value)) => flags[name] = value
+      (Option({ kind: StringOpt(_), .. }), Text(value)) =>
+        values[name] = [value]
+      (Option({ kind: IntOpt(_), .. }), Integer(value)) =>
+        values[name] = [value.to_string()]
+      (Option({ kind: IntOpt(_), .. }), Text(value)) => {
+        ignore(parse_integer_value(name, value))
+        values[name] = [value]
+      }
+      (Positional(pos, multiple~), Positionals(items)) => {
+        if (pos.required && items.is_empty()) ||
+          (!multiple && items.length() > 1) {
+          raise CliError::InvalidOverride(
+            name, "invalid number of positional values",
+          )
+        }
+        if items.is_empty() {
+          values.remove(name)
+          sources.remove(name)
+          continue
+        }
+        values[name] = items[:].to_owned()
+      }
+      _ =>
+        raise CliError::InvalidOverride(
+          name, "value does not match the argument kind",
+        )
+    }
+    sources[name] = Override
+  }
+  { ..self, context: { flags, values, sources, }, }
+}
+
+///|
+/// Renders root or nested help, including inherited globals and explicit
+/// examples, without parsing or executing. Unknown paths raise UnknownCommand.
 pub fn CliApp::render_help(
   self : CliApp,
   command_path~ : ArrayView[String] = [],
@@ -220,11 +235,23 @@ pub fn CliApp::render_help(
   if command_path.is_empty() {
     return build_cli_command(self).render_help()
   }
-  guard find_command_path(self.commands, command_path) is Some(command) else {
-    raise CliError::UnknownCommand(command_path.to_owned())
+  let mut selected = self.root
+  let globals : Array[OptionDef] = []
+  for name in command_path {
+    for option in selected.options {
+      if option.global {
+        globals.push(option)
+      }
+    }
+    guard find_command_def(selected.subcommands, name) is Some(command) else {
+      raise CliError::UnknownCommand(command_path.to_owned())
+    }
+    selected = command
   }
-  build_command({
-    ..command,
-    name: "\{self.name} \{command_path.to_owned().join(" ")}",
+  let options = globals + selected.options[:].to_owned()
+  build_parser({
+    ..selected,
+    name: "\{self.root.name} \{command_path.to_owned().join(" ")}",
+    options: ReadOnlyArray::from_array(options),
   }).render_help()
 }

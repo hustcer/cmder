@@ -8,24 +8,27 @@ import {
 }
 
 // Values
-pub fn bool(String, short? : Char, description? : String) -> OptionDef
+pub fn bool(String, short? : Char, description? : String, global? : Bool) -> OptionDef
 
-pub fn build_command(CommandDef) -> @argparse.Command
+pub fn build_command(CommandDef) -> @argparse.Command raise CliError
 
-pub fn cli(name~ : String, version? : String, description? : String, options? : Array[OptionDef], commands? : Array[CommandDef]) -> CliApp
+pub fn cli(name~ : String, version? : String, description? : String, options? : ArrayView[OptionDef], positionals? : ArrayView[PositionalDef], examples? : ArrayView[String], commands? : ArrayView[CommandDef], run? : (Context) -> Unit raise) -> CliApp raise CliError
 
-pub fn command(name~ : String, description? : String, options? : Array[OptionDef], positionals? : Array[PositionalDef], examples? : Array[String], subcommands? : Array[CommandDef], run? : ((Context) -> Unit)?) -> CommandDef
+pub fn command(name~ : String, description? : String, options? : ArrayView[OptionDef], positionals? : ArrayView[PositionalDef], examples? : ArrayView[String], subcommands? : ArrayView[CommandDef], run? : (Context) -> Unit raise) -> CommandDef
 
-pub fn int(String, short? : Char, description? : String, required? : Bool, default? : Int32?) -> OptionDef
+pub fn int(String, short? : Char, description? : String, required? : Bool, default? : Int32, global? : Bool) -> OptionDef
 
 pub fn positional(String, description? : String, required? : Bool) -> PositionalDef
 
-pub fn string(String, short? : Char, description? : String, required? : Bool, default? : String?) -> OptionDef
+pub fn string(String, short? : Char, description? : String, required? : Bool, default? : String, global? : Bool) -> OptionDef
 
 // Errors
 #derive(@debug.Debug)
 pub(all) suberror CliError {
   ParseError(String)
+  InvalidDefinition(String)
+  UnknownArgument(String)
+  InvalidOverride(String, String)
   MissingCommand
   UnknownCommand(Array[String])
   MissingSubcommand(String, Array[String])
@@ -41,78 +44,77 @@ pub fn CliError::to_string(Self) -> String
 pub impl Show for CliError
 
 // Types and methods
-pub(all) struct CliApp {
-  name : String
-  version : String
-  description : String
-  root_options : Array[OptionDef]
-  commands : Array[CommandDef]
+pub(all) enum ArgumentValue {
+  Text(String)
+  Integer(Int32)
+  Flag(Bool)
+  Positionals(ReadOnlyArray[String])
 }
-pub fn CliApp::dispatch(Self, Invocation) -> Unit raise CliError
-pub fn CliApp::parse(Self, argv~ : ArrayView[String], validate_types? : Bool) -> ParseOutcome
+
+pub struct CliApp {
+  root : CommandDef
+  version : String
+}
+pub fn CliApp::parse(Self, argv~ : ArrayView[String]) -> ParseOutcome
 pub fn CliApp::render_bash_completion(Self) -> String
 pub fn CliApp::render_fish_completion(Self) -> String
 pub fn CliApp::render_help(Self, command_path? : ArrayView[String]) -> String raise CliError
 pub fn CliApp::render_schema(Self) -> String
 pub fn CliApp::render_schema_json(Self) -> @json.Json
 pub fn CliApp::render_zsh_completion(Self) -> String
-pub fn CliApp::run(Self, argv? : Array[String]?, validate_types? : Bool) -> Unit raise
+pub fn CliApp::run(Self, argv? : ArrayView[String]) -> Unit raise
 
-pub(all) struct CommandDef {
+pub struct CommandDef {
   name : String
   description : String
-  options : Array[OptionDef]
-  positionals : Array[PositionalDef]
-  examples : Array[String]
-  subcommands : Array[CommandDef]
-  run : ((Context) -> Unit)?
+  options : ReadOnlyArray[OptionDef]
+  positionals : ReadOnlyArray[PositionalDef]
+  examples : ReadOnlyArray[String]
+  subcommands : ReadOnlyArray[CommandDef]
+  run : ((Context) -> Unit raise)?
 }
 
-pub(all) struct Context {
-  flags : Map[String, Bool]
-  values : Map[String, Array[String]]
-  subcommand : (String, Context)?
+pub struct Context {
+  // private fields
 }
 pub fn Context::get_bool(Self, String) -> Bool
-pub fn Context::get_int(Self, String) -> Int32?
-pub fn Context::get_int_checked(Self, String) -> Int32? raise CliError
-pub fn Context::get_int_required(Self, String) -> Int32 raise
+pub fn Context::get_int(Self, String) -> Int32? raise CliError
+pub fn Context::get_int_required(Self, String) -> Int32 raise CliError
 pub fn Context::get_string(Self, String) -> String?
-pub fn Context::get_string_required(Self, String) -> String raise
+pub fn Context::get_string_required(Self, String) -> String raise CliError
 pub fn Context::get_strings(Self, String) -> Array[String]
-pub fn Context::get_subcommand(Self) -> (String, Self)?
+pub fn Context::source_of(Self, String) -> ValueSource?
 
 pub struct Invocation {
-  command_path : Array[String]
+  command_path : ReadOnlyArray[String]
   context : Context
   // private fields
 }
+pub fn Invocation::dispatch(Self) -> Unit raise
 pub fn Invocation::source_of(Self, String) -> ValueSource?
 pub fn Invocation::was_provided(Self, String) -> Bool
+pub fn Invocation::with_overrides(Self, Map[String, ArgumentValue]) -> Self raise CliError
 
 #derive(@debug.Debug)
-pub(all) struct OptionDef {
+pub struct OptionDef {
   name : String
-  type_ : OptionType
-  short : Char
+  kind : OptionKind
+  short : Char?
   description : String
   required : Bool
-  default_value : String?
+  global : Bool
 }
 pub fn OptionDef::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
-pub(all) enum OptionType {
-  StringOpt
+pub(all) enum OptionKind {
+  StringOpt(String?)
+  IntOpt(Int32?)
   BoolOpt
-  IntOpt
 }
-pub fn OptionType::equal(Self, Self) -> Bool
-pub fn OptionType::not_equal(Self, Self) -> Bool
-pub fn OptionType::output(Self, &Logger) -> Unit
-pub fn OptionType::to_repr(Self) -> @debug.Repr
-pub fn OptionType::to_string(Self) -> String
-pub impl Show for OptionType
+pub fn OptionKind::equal(Self, Self) -> Bool
+pub fn OptionKind::not_equal(Self, Self) -> Bool
+pub fn OptionKind::to_repr(Self) -> @debug.Repr
 
 pub(all) enum ParseOutcome {
   Parsed(Invocation)
@@ -121,7 +123,7 @@ pub(all) enum ParseOutcome {
   Failed(CliError)
 }
 
-pub(all) struct PositionalDef {
+pub struct PositionalDef {
   name : String
   description : String
   required : Bool
@@ -132,6 +134,7 @@ pub(all) enum ValueSource {
   Argv
   Env
   Default
+  Override
 }
 pub fn ValueSource::equal(Self, Self) -> Bool
 pub fn ValueSource::not_equal(Self, Self) -> Bool

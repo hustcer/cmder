@@ -1,14 +1,4 @@
 ///|
-/// sentinel value for "no short flag"
-let no_short : Char = '\u0000'
-
-///|
-// Parser, schema, and examples must agree even for public record literals.
-fn option_is_required(opt : OptionDef) -> Bool {
-  opt.type_ != BoolOpt && opt.required && opt.default_value is None
-}
-
-///|
 /// Defines a string-valued option.
 ///
 /// ```mbt check
@@ -19,21 +9,22 @@ fn option_is_required(opt : OptionDef) -> Bool {
 /// ```
 pub fn string(
   name : String,
-  short~ : Char = '\u0000',
+  short? : Char,
   description~ : String = "",
   required~ : Bool = false,
-  default~ : String? = None,
+  default? : String,
+  global~ : Bool = false,
 ) -> OptionDef {
   {
     name,
-    type_: StringOpt,
+    kind: StringOpt(default),
     short,
     description,
     required: match default {
       Some(_) => false
       None => required
     },
-    default_value: default,
+    global,
   }
 }
 
@@ -48,17 +39,11 @@ pub fn string(
 /// ```
 pub fn bool(
   name : String,
-  short~ : Char = '\u0000',
+  short? : Char,
   description~ : String = "",
+  global~ : Bool = false,
 ) -> OptionDef {
-  {
-    name,
-    type_: BoolOpt,
-    short,
-    description,
-    required: false,
-    default_value: None,
-  }
+  { name, kind: BoolOpt, short, description, required: false, global, }
 }
 
 ///|
@@ -66,29 +51,36 @@ pub fn bool(
 ///
 /// ```mbt check
 /// test {
-///   let option = @cmder.int("count", default=Some(3))
+///   let option = @cmder.int("count", default=3)
 ///   inspect(option.required, content="false")
 /// }
 /// ```
 pub fn int(
   name : String,
-  short~ : Char = '\u0000',
+  short? : Char,
   description~ : String = "",
   required~ : Bool = false,
-  default~ : Int32? = None,
+  default? : Int32,
+  global~ : Bool = false,
 ) -> OptionDef {
   {
     name,
-    type_: IntOpt,
+    kind: IntOpt(default),
     short,
     description,
     required: match default {
       Some(_) => false
       None => required
     },
-    default_value: match default {
-      Some(v) => Some(v.to_string())
-      None => None
-    },
+    global,
+  }
+}
+
+///|
+fn option_default(opt : OptionDef) -> String? {
+  match opt.kind {
+    StringOpt(value) => value
+    IntOpt(value) => value.map(v => v.to_string())
+    BoolOpt => None
   }
 }

@@ -4,6 +4,7 @@ package "hustcer/cmder/internal/completion_fixture"
 // Values
 
 // Errors
+type FixtureError
 
 // Types and methods
 

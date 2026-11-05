@@ -1,38 +1,31 @@
 ///|
-test "OptionDef holds string option metadata" {
-  let opt : @cmder.OptionDef = {
-    name: "output",
-    type_: @cmder.StringOpt,
-    short: 'o',
-    description: "Output path",
-    required: true,
-    default_value: None,
-  }
-  inspect(opt.name, content="output")
-  inspect(opt.type_, content="StringOpt")
-  inspect(opt.required, content="true")
+test "command collections are detached from caller-owned arrays" {
+  let options = [@cmder.string("name")]
+  let children = [@cmder.command(name="child")]
+  let examples = ["app child"]
+  let root = @cmder.command(
+    name="app",
+    options~,
+    subcommands=children,
+    examples~,
+  )
+  options[0] = @cmder.int("different")
+  children[0] = @cmder.command(name="different")
+  examples[0] = "edited"
+  assert_eq(root.options[0].name, "name")
+  assert_eq(root.subcommands[0].name, "child")
+  assert_eq(root.examples[0], "app child")
 }
 
 ///|
-test "CommandDef holds subcommands" {
-  let sub : @cmder.CommandDef = {
-    name: "sub",
-    description: "A subcommand",
-    options: [],
-    positionals: [],
-    examples: [],
-    subcommands: [],
-    run: Some(fn(_ctx) { () }),
-  }
-  let cmd : @cmder.CommandDef = {
-    name: "app",
-    description: "An app",
-    options: [],
-    positionals: [],
-    examples: [],
-    subcommands: [sub],
-    run: None,
-  }
-  inspect(cmd.subcommands.length(), content="1")
-  inspect(cmd.subcommands[0].name, content="sub")
+test "application owns a single immutable root command" {
+  let commands = [@cmder.command(name="go")]
+  let app = @cmder.cli(name="app", version="2", commands~, positionals=[
+    @cmder.positional("file"),
+  ])
+  commands[0] = @cmder.command(name="edited")
+  assert_eq(app.root.name, "app")
+  assert_eq(app.version, "2")
+  assert_eq(app.root.subcommands[0].name, "go")
+  assert_eq(app.root.positionals[0].name, "file")
 }

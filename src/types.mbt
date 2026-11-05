@@ -1,77 +1,61 @@
 ///|
 #derive(Debug, Eq)
-pub(all) enum OptionType {
-  StringOpt
+pub(all) enum OptionKind {
+  StringOpt(String?)
+  IntOpt(Int32?)
   BoolOpt
-  IntOpt
 }
 
 ///|
-pub extend OptionType with Debug::{to_repr}
+pub extend OptionKind with Debug::{to_repr}
 
 ///|
-pub extend OptionType with Eq::{equal, not_equal}
+pub extend OptionKind with Eq::{equal, not_equal}
 
 ///|
-pub extend OptionType with Show::{output, to_string}
-
-///|
-pub impl Show for OptionType with fn output(self, logger) {
-  match self {
-    StringOpt => logger.write_string("StringOpt")
-    BoolOpt => logger.write_string("BoolOpt")
-    IntOpt => logger.write_string("IntOpt")
-  }
-}
-
-///|
-/// Option metadata shared by parsing, help, schema, and completion. For string
-/// and integer options, a default permits omission even when required is true.
-/// Boolean flags are always optional and default to false; their required and
-/// default_value fields are ignored, including in public record literals.
+/// Immutable, normalized option metadata. Construct with string, int, or bool.
+/// Defaults retain their declared type and make an option optional. Only global
+/// options are visible to descendant commands.
 #derive(Debug)
-pub(all) struct OptionDef {
+pub struct OptionDef {
   name : String
-  type_ : OptionType
-  short : Char
+  kind : OptionKind
+  short : Char?
   description : String
   required : Bool
-  default_value : String?
+  global : Bool
 }
 
 ///|
 pub extend OptionDef with Debug::{to_repr}
 
 ///|
-pub(all) struct PositionalDef {
+pub struct PositionalDef {
   name : String
   description : String
   required : Bool
 }
 
 ///|
-pub(all) struct CommandDef {
+pub struct CommandDef {
   name : String
   description : String
-  options : Array[OptionDef]
-  positionals : Array[PositionalDef]
-  examples : Array[String]
-  subcommands : Array[CommandDef]
-  run : ((Context) -> Unit)?
+  options : ReadOnlyArray[OptionDef]
+  positionals : ReadOnlyArray[PositionalDef]
+  examples : ReadOnlyArray[String]
+  subcommands : ReadOnlyArray[CommandDef]
+  run : ((Context) -> Unit raise)?
 }
 
 ///|
-pub(all) struct Context {
-  flags : Map[String, Bool]
-  values : Map[String, Array[String]]
-  subcommand : (String, Context)?
+pub struct Context {
+  priv flags : Map[String, Bool]
+  priv values : Map[String, Array[String]]
+  priv sources : Map[String, ValueSource]
 }
 
 ///|
-pub(all) struct CliApp {
-  name : String
+pub struct CliApp {
+  root : CommandDef
   version : String
-  description : String
-  root_options : Array[OptionDef]
-  commands : Array[CommandDef]
 }

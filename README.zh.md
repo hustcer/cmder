@@ -2,402 +2,271 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-`hustcer/cmder` 是 MoonBit 的声明式命令行构建库，基于 `moonbitlang/core/argparse`，使用命令定义、选项和回调组织 CLI。
+`hustcer/cmder` 是 MoonBit 的声明式命令行构建库，基于 `moonbitlang/core/argparse`。
 
 **本项目 fork 自 [mizchi/admiral](https://github.com/mizchi/admiral)，并在其基础上进行修改和维护。** 感谢 mizchi 和上游贡献者提供的设计与实现；上游项目的设计灵感来自 [gunshi](https://github.com/kazupon/gunshi)。
 
-- 字符串、布尔、整数选项，以及位置参数。
-- 多层子命令与命令回调，支持读取祖先命令的选项值。
-- 由 argparse 生成帮助信息与根命令版本信息。
-- 导出 CLI 定义的 JSON，供工具和 AI agent 使用。
-- 生成 Bash、Zsh、Fish 补全脚本。
+- 支持根命令、多层子命令，以及可以传播错误的回调。
+- 支持字符串、Boolean、经过校验的 Int32 选项，以及位置参数。
+- 显式声明供后代共享的 global 选项，其他参数保持局部作用域。
+- 不可变的命令定义和解析结果，提供参数来源信息。
+- 生成帮助、版本、JSON 定义以及 Bash/Zsh/Fish 补全脚本。
 
 ## 安装
-
-在已有 MoonBit 模块的根目录执行：
 
 ```sh
 moon add hustcer/cmder
 ```
 
-然后在使用它的包的 `moon.pkg` 中添加：
+在使用它的包的 `moon.pkg` 中添加导入。以下可执行示例还使用 `core/env` 控制退出状态：
 
 ```text
 import {
   "hustcer/cmder",
+  "moonbitlang/core/env",
 }
-```
-
-代码中使用默认别名 `@cmder`。如果该包是可执行程序，还需在 `moon.pkg` 中声明：
-
-```text
 pkgtype(kind: "executable")
 ```
 
 ## 快速开始
 
-将下面的代码放入可执行包的 `main.mbt`：
-
-这些可执行示例使用 `@env.exit`；请同时在该包的导入中添加 `"moonbitlang/core/env"`。
+单命令工具无需额外创建子命令。将下面的代码放入 `main.mbt`：
 
 ```moonbit
 ///|
-fn main {
+fn main raise {
   let app = @cmder.cli(
     name="hello",
     version="1.0.0",
-    description="A small greeting CLI",
-    commands=[
-      @cmder.command(
-        name="greet",
-        description="Greet someone",
-        options=[
-          @cmder.string("name", short='n', required=true),
-          @cmder.bool("loud", short='l'),
-          @cmder.int("count", short='c', default=Some(1)),
-        ],
-        examples=["hello greet -n Alice", "hello greet -n Bob -l -c 2"],
-        run=Some(fn(ctx) {
-          let name = ctx.get_string_required("name") catch {
-            err => { eprintln(err); @env.exit(1) }
-          }
-          let count = ctx.get_int_required("count") catch {
-            err => { eprintln(err); @env.exit(1) }
-          }
-          for _ in 0..<count {
-            let message = "Hello, \{name}!"
-            println(if ctx.get_bool("loud") { message.to_upper() } else { message })
-          }
-        }),
-      ),
+    options=[
+      @cmder.string("name", short='n', required=true),
+      @cmder.int("count", short='c', default=1),
+      @cmder.bool("loud", short='l'),
     ],
+    examples=["hello -n Alice", "hello -n Bob -l -c 2"],
+    run=ctx => {
+      let name = ctx.get_string_required("name")
+      let count = ctx.get_int_required("count")
+      for _ in 0..<count {
+        let message = "Hello, \{name}!"
+        println(if ctx.get_bool("loud") { message.to_upper() } else { message })
+      }
+    },
   )
-  app.run(validate_types=true) catch { err => { eprintln(err); @env.exit(1) } }
+  app.run() catch {
+    error => {
+      eprintln(error)
+      @env.exit(1)
+    }
+  }
 }
 ```
 
-编译成 `hello` 后：
-
 ```text
-$ hello greet -n Alice
+$ hello -n Alice
 Hello, Alice!
-
-$ hello greet -n Bob -l -c 2
+$ hello -n Bob -l -c 2
 HELLO, BOB!
 HELLO, BOB!
 ```
 
-使用 `hello --help` 查看命令列表，`hello greet --help` 查看命令参数，`hello --version` 查看版本。
+`--help` 和 `--version` 自动生成。应用回调的类型为 `(Context) -> Unit raise`：参数读取错误及业务错误通过 dispatch 和 run 原样传播，由应用入口统一决定错误输出和退出状态。`eprintln` 在 native 和 JS 上写入 stderr；当前 wasm-gc 运行时会退回 stdout。
 
-以上可执行示例使用 `eprintln` 报告错误，并以状态码 1 退出。Native 和 JS 将诊断写入 stderr；
-当前 wasm-gc 运行时会退回 stdout。错误输出和退出状态由应用自行决定。
+`cli` 在构建时验证完整定义树。名称非法、参数/短选项/子命令重名、位置参数顺序错误，以及与继承 global 参数冲突，都会抛出 `CliError::InvalidDefinition`。因此示例使用 `fn main raise`。
+
+命令和参数名使用 ASCII 字母、数字、下划线及连字符，首尾不能是连字符。短选项使用一个 ASCII 字母、数字或下划线。这使解析拼写与生成的 shell 代码保持一致；描述仍可使用任意文本。
 
 ## 选项与位置参数
 
-以下是可放入命令定义的选项：
-
 ```moonbit
 let options = [
-  @cmder.string("config", short='f', description="Config file", required=true),
-  @cmder.string("host", default=Some("localhost")),
-  @cmder.int("port", short='p', default=Some(3000)),
-  @cmder.bool("verbose", short='v', description="Verbose output"),
+  @cmder.string("config", short='f', required=true),
+  @cmder.string("host", default="localhost"),
+  @cmder.int("port", short='p', default=3000),
+  @cmder.bool("verbose", short='v', global=true),
 ]
 ```
 
-| 定义         | 用法                         | 默认行为                           |
-| ------------ | ---------------------------- | ---------------------------------- |
-| `string`     | `--host localhost`           | 未提供时为 `None`，可配置默认值    |
-| `int`        | `--port 3000`                | 读取时转换为 `Int32`，可配置默认值 |
-| `bool`       | `--verbose` 或 `-v`          | 未提供时为 `false`                 |
-| `positional` | `copy source.txt target.txt` | 按声明顺序读取                     |
+`short` 和 `default` 直接接受对应的值。字符串/整数选项设置默认值后，即使同时指定 `required=true`，也允许省略。Boolean 开关始终可省略，初始值为 false。辅助函数创建归一化、只读的 `OptionDef`，不再支持直接构造记录。`OptionKind` 的 `StringOpt` 保存 `String?` 默认值，`IntOpt` 保存 `Int32?` 默认值，`BoolOpt` 不携带值默认值。未设置的短选项以 `None` 表示。
 
-`short` 可以省略。`string` 和 `int` 支持 `required=true`；配置默认值后，即使同时设置 `required=true`，调用者也可以省略该选项。
+`parse` 和 `run` 始终校验整数选项：允许带负号的十进制 Int32，范围为 -2147483648 到 2147483647。前导零没有位数限制。负数支持 `--delta -1`、`-d -1` 和 `--delta=-1`。`get_string` 仍能读取原始写法。正数、业务范围和参数关系由应用自行校验。
 
-公开的 `OptionDef` 记录字面量也遵循同样的规则：帮助、schema 的 `required` 字段及自动示例
-均反映参数是否实际必须提供。Boolean 开关始终可省略，默认为 false；记录中的 `required`
-和 `default_value` 字段被忽略，schema 也不会为开关输出值默认值。
-
-整数选项默认在解析阶段按字符串接收。可选整数使用 `get_int_checked`，必填整数使用
-`get_int_required`，以区分缺失和非法输入。需要在执行前验证全部已解析整数选项时，
-可以在 `parse` 或 `run` 上显式启用 `validate_types=true`。正数、范围等业务约束仍由应用自行校验。
-
-负整数支持分离形式（`--delta -1`、`-d -1`）和连接形式（`--delta=-1`）。
-
-位置参数放在 `positionals` 中，必填参数应排在可选参数之前。除最后一个外，每个位置参数最多接收一个值；最后一个接收剩余值：
+根命令和子命令都支持 `positionals`。必填位置参数必须位于可选参数之前；除最后一个之外，每个位置参数最多接受一个值，最后一个接受剩余所有值：
 
 ```moonbit
-let show = @cmder.command(
-  name="show",
+let app = @cmder.cli(
+  name="copy",
   positionals=[
-    @cmder.positional("files", description="Input files", required=true),
+    @cmder.positional("source", required=true),
+    @cmder.positional("destinations"),
   ],
-  run=Some(fn(ctx) {
-    for file in ctx.get_strings("files") {
-      println(file)
-    }
-  }),
+  run=ctx => {
+    println(ctx.get_string_required("source"))
+    println(ctx.get_strings("destinations").join(", "))
+  },
 )
 ```
 
-`show a.txt b.txt` 会将两个文件名都放入 `files`。
+`copy a.txt b.txt c.txt` 得到 `source="a.txt"` 和 `destinations=["b.txt", "c.txt"]`。
 
-## 子命令与选项作用域
+带子命令的命令可以包含可选位置参数，但不能包含必填位置参数：argparse 会让该组合的子命令不可达，因此构建时会拒绝。一旦开始读取位置参数，后续单词属于该命令的位置参数执行流程，不能再选择子命令。
 
-`cli(commands=...)` 声明顶层命令，`command(subcommands=...)` 声明下一层命令：
+## 子命令与作用域
 
 ```moonbit
 let app = @cmder.cli(
   name="myapp",
-  options=[@cmder.bool("verbose", short='v')],
+  options=[@cmder.bool("verbose", short='v', global=true)],
   commands=[
-    @cmder.command(name="db", subcommands=[
-      @cmder.command(
-        name="migrate",
-        options=[@cmder.bool("dry-run")],
-        run=Some(fn(ctx) {
+    @cmder.command(
+      name="db",
+      options=[@cmder.string("region", default="west", global=true)],
+      subcommands=[
+        @cmder.command(name="migrate", options=[@cmder.bool("dry-run")], run=ctx => {
           if ctx.get_bool("verbose") {
             println("Starting migration")
           }
+          println(ctx.get_string_required("region"))
           println(if ctx.get_bool("dry-run") { "Preview" } else { "Apply" })
         }),
-      ),
-    ]),
+      ],
+    ),
   ],
 )
 ```
 
-调用方式为 `myapp -v db migrate --dry-run`：选项应放在声明它的命令层级。回调可以读取祖先层级的值，同名的子级值优先，包含子级默认值。
+Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db migrate` 和 `myapp db migrate -v` 都可使用；`--region` 从进入 `db` 后开始可用。每个 global 参数只有一份定义，后代不能用相同名称或短选项重新定义或遮蔽它。显式输入优先于该参数的默认值。
 
-选中更深的子命令时，只执行对应的命令回调，不会依次执行祖先回调。如果未指定命令，或者选中的命令既没有回调也没有选中子命令，`run` 会报错。根 `cli` 本身不提供 `run` 回调参数。
+其他参数保持局部作用域。回调只能读取选中命令的局部参数和继承的 global 参数，不能读取祖先局部值。不同作用域的局部参数可以同名，但不会合并：根级 `string("count")` 不会为子级 `int("count")` 提供值。需要后代读取的选项应标记为 global。
 
-## 读取参数与处理错误
+只执行选中命令的回调。选择带回调的分组命令会执行该回调；选择更深的子命令时，只执行更深的回调。没有回调时，根命令调度抛出 `MissingCommand`，分组抛出 `MissingSubcommand`，叶子命令抛出 `MissingHandler`。
 
-回调签名为 `(Context) -> Unit`。在回调中调用可能抛错的方法时，需要就地处理错误。
+## 读取参数与错误处理
 
-| Context 方法                | 返回类型                | 行为                                        |
-| --------------------------- | ----------------------- | ------------------------------------------- |
-| `get_bool(name)`            | `Bool`                  | 缺失时返回 `false`                          |
-| `get_string(name)`          | `String?`               | 返回第一个值，缺失时为 `None`               |
-| `get_string_required(name)` | `String raise`          | 缺失时抛错                                  |
-| `get_int(name)`             | `Int32?`                | 缺失或整数无效时返回 `None`                 |
-| `get_int_checked(name)`     | `Int32? raise CliError` | 仅缺失时返回 `None`；格式错误和溢出分别抛错 |
-| `get_int_required(name)`    | `Int32 raise`           | 缺失或整数无效时抛错                        |
-| `get_strings(name)`         | `Array[String]`         | 返回全部值，缺失时为空数组                  |
-| `get_subcommand()`          | `(String, Context)?`    | 返回选中的下一层子命令及其上下文            |
+| 方法                        | 返回值                  | 含义                                  |
+| --------------------------- | ----------------------- | ------------------------------------- |
+| `get_bool(name)`            | `Bool`                  | 缺失时返回 false                      |
+| `get_string(name)`          | `String?`               | 首个原始值，保留整数的原始写法        |
+| `get_string_required(name)` | `String raise CliError` | 缺失时抛出 `MissingOption`            |
+| `get_int(name)`             | `Int32? raise CliError` | 仅缺失返回 None，格式或范围错误会抛出 |
+| `get_int_required(name)`    | `Int32 raise CliError`  | 缺失、格式错误和溢出都会抛出          |
+| `get_strings(name)`         | `Array[String]`         | 所有值的独立副本，缺失时返回空数组    |
+| `source_of(name)`           | `ValueSource?`          | 当前有效值的来源，缺失时返回 None     |
 
-只有未提供参数时才应使用默认值的场景，请使用 `get_int_checked`。它接受带可选负号的十进制
-`Int32`，允许前导零；格式错误抛出 `CliError::InvalidInteger(name, value)`，溢出抛出
-`IntegerOutOfRange(name, value)`。原有 `get_int` 保留宽松行为和既有的位数限制。
-具体产品的数值范围仍由调用方判断。
+`get_int` 和 `get_int_required` 使用相同转换规则。非法格式抛出 `InvalidInteger(name, raw)`，溢出抛出 `IntegerOutOfRange(name, raw)`。把字符串参数作为整数读取时，也遵循这些检查。Getter 后提供的默认值只作用于缺失输入，不会掩盖非法输入。
 
-必填读取方法及命令执行错误现在使用 `CliError`，其 `message()` 和 `to_string()`
-返回可直接展示的文本，不附带内部源码位置。`ParseError(message)` 保留 argparse 原始诊断
-及上下文帮助，文本本身不是机器错误分类。回调签名保持不变。
+`CliError::message()` 和 `to_string()` 返回可直接展示的诊断。`ParseError(message)` 保留 argparse 的诊断文本和帮助，不应通过解析该文本判断机器可读的错误类别。业务回调错误保留原始错误类型，可由宿主集中处理。
 
-## 只解析，不执行
+## 解析、宿主检查与调度
 
-`app.parse(argv=...)` 必须显式传入参数，数组中不包含可执行程序名。它不读取进程参数或
-环境变量，不打印、不退出进程，也不执行回调：
+`parse` 要求显式 argv，数组不包含可执行程序名。它不执行进程 I/O、不读取进程环境，也不执行回调，返回 `Parsed`、`Help`、`Version` 或 `Failed`。帮助、版本及结构性解析错误保持 argparse 相对于整数检查的原有优先级；只检查选中作用域的输入类型。
+
+将以下流程放入允许传播错误的宿主函数，再由应用入口像“快速开始”一样统一处理传播的错误。
 
 ```moonbit
-let app = @cmder.cli(name="app", commands=[
-  @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))]),
-])
-match app.parse(argv=["go", "--count", "3"]) {
+let app = @cmder.cli(name="app", options=[@cmder.int("count", default=1)], run=ctx => {
+  println(ctx.get_int_required("count"))
+})
+match app.parse(argv=["--count", "2"]) {
   Parsed(call) => {
-    // call.command_path 为 ["go"]，由宿主决定如何执行。
-    let count = call.context.get_int_checked("count") catch {
-      err => { println(err.message()); return }
-    }
-    println(count.unwrap_or(1))
+    // Perform host checks before execution.
+    let edited = call.with_overrides({
+      "count": @cmder.ArgumentValue::Integer(3),
+    })
+    edited.dispatch()
   }
   Help(text) | Version(text) => println(text)
-  Failed(error) => println(error.message())
-}
-```
-
-`Parsed` 也支持根命令参数（`command_path` 为空）和没有回调的命令。选中命令的 `context`
-包含祖先参数，子级值及子级默认值优先；`context.subcommand` 为 `None`。
-整数转换与 `run` 一样仍按需执行，消费整数时使用 checked getter。
-
-`call.source_of(name)` 返回 `Argv`、`Env`、`Default`，参数缺失则为 `None`。
-`call.was_provided(name)` 仅对有效值来自 argv 的参数返回 true，包含显式空字符串及
-与默认值相同的显式输入。子级默认值覆盖祖先 argv 时，值和来源同步覆盖。
-来源是解析时的快照，调用方修改返回的 context 不会改写来源。
-当前参数定义尚未配置环境变量绑定，因此会产生 `Argv` 和 `Default`；`Env` 保留底层来源模型，
-不会隐式访问进程环境。
-
-`run()` 继续作为便利入口：可读取进程参数、执行回调，并在帮助或版本请求时打印后成功退出。
-需要自行控制输出、执行及退出状态的宿主应使用 `parse`。既有公开结构体字段、默认解析行为
-及原有调用方式保持兼容。
-
-只需要帮助文本时，使用 `app.render_help()` 或
-`app.render_help(command_path=["db", "migrate"])`。它不解析参数或执行回调，会显示显式声明
-的命令示例；未知路径抛出 `CliError::UnknownCommand(path)`。
-
-## 显式调度与类型校验
-
-解析完成并执行宿主自身的检查后，使用 `app.dispatch(call)` 调用选中命令的回调，无需重新解析。
-它直接传入 invocation 当前的 context，只执行选中命令的回调，不依次执行祖先回调。
-缺失命令、子命令、处理器及未知路径会抛出与 `run` 一致的类型化错误。
-调度层不执行帮助或版本输出，也不退出进程；回调仍可执行其自身的副作用。
-每次调用都会再次执行。调度根据当前应用定义解析命令路径，调用方应使用兼容的定义；
-它不认证 invocation 的来源，也不重新校验编辑后的 context。
-通常应在同一个 app 上完成解析与调度，并在调度前完成宿主对 context 的修改和检查。
-
-```moonbit
-let app = @cmder.cli(name="app", commands=[
-  @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))],
-    run=Some(fn(ctx) {
-      let count = ctx.get_int_checked("count") catch {
-        err => { eprintln(err.message()); @env.exit(1) }
-      }
-      println(count.unwrap_or(1))
-    })),
-])
-match app.parse(argv=["go", "--count", "2"], validate_types=true) {
-  Parsed(call) => app.dispatch(call) catch {
-    err => { eprintln(err.message()); @env.exit(1) }
+  Failed(error) => {
+    eprintln(error.message())
+    @env.exit(1)
   }
-  Help(text) | Version(text) => println(text)
-  Failed(error) => { eprintln(error.message()); @env.exit(1) }
 }
 ```
 
-`parse` 或 `run` 的 `validate_types=true` 按 `get_int_checked` 的相同规则和错误类型，
-检查十进制 `Int32` 的整数格式与溢出。在继承值合并前，每个选中命令层级的值和默认值
-都按该层自身的定义校验。即使后代会覆盖某个祖先值，非法的祖先值仍会被拒绝；
-缺失的子级选项不会将继承的字符串重新解释成整数。未选中的分支不进行类型校验。
+解析结果绑定选中命令的快照。`call.dispatch()` 无需另行配对 app，不重新解析，不执行帮助/版本 I/O，并原样传播回调错误。每次调用都会再次执行。`command_path` 是不包含应用名的只读列表，空路径选择根命令。`Context` 的存储私有，不再携带子命令树。
 
-例如，下面的输入能够通过校验，因为 `"text"` 属于根级字符串选项，子级整数选项没有提供：
+定义会将调用方提供的集合复制为只读数组。修改原始 argv 或 getter 返回的数组不会影响解析结果。宿主通过显式、原子的 `with_overrides` 覆盖参数：检查可见名称、参数类型及位置参数基数后返回新的 invocation。覆盖失败不会修改原结果。
 
-```moonbit
-let app = @cmder.cli(name="app", options=[@cmder.string("count")], commands=[
-  @cmder.command(name="go", options=[@cmder.int("count")]),
-])
-let outcome = app.parse(argv=["--count", "text", "go"], validate_types=true)
-```
+| 覆盖值                               | 接受的参数                               |
+| ------------------------------------ | ---------------------------------------- |
+| `ArgumentValue::Text(text)`          | 字符串选项，或需要校验原始格式的整数选项 |
+| `ArgumentValue::Integer(value)`      | 整数选项                                 |
+| `ArgumentValue::Flag(value)`         | Boolean 开关                             |
+| `ArgumentValue::Positionals(values)` | 位置参数，遵循必填及末尾多值约束         |
 
-结果为 `Parsed`，但其 context 继承了 `count="text"`，因此
-`get_int_checked("count")` 会抛出 `CliError::InvalidInteger("count", "text")`。
-改为传入 `--count text go --count 2`，则会提供合法的子级整数。
-校验通过只保证各层输入符合其所属定义，不保证合并后的 context 满足选中命令的选项类型。
-跨层级用同名参数表达同一概念时，建议保持类型一致；表达不同概念时应使用不同名称。
+`call.source_of(name)` 和 `call.context.source_of(name)` 返回 `Argv`、`Default`、`Override` 或 None。`Env` 为底层来源模型保留；当前定义没有配置环境变量绑定。未改变的值保留原来源；被覆盖的值使用 `Override`，即使与 argv 值相等。清空可选位置参数会使其缺失，此时没有有效来源。`was_provided(name)` 仅在当前有效来源为 `Argv` 时返回 true。
 
-帮助、版本及结构性解析失败保持原有优先级。类型校验不执行回调，`run` 只在解析和校验
-成功后调度。原始字符串、argv 和来源快照保持不变。读取整数时仍应使用 checked getter：
-旧 `get_int` 的位数限制仍会影响带大量前导零的整数。业务范围和参数关系仍由调用方负责。
+`app.run()` 是便利入口：读取进程 argv，解析并调度，在帮助/版本请求时打印并以状态码 0 退出。`app.run(argv=[...])` 使用显式参数。解析及回调错误向调用方传播。嵌入式宿主使用 `parse` 和 `call.dispatch()` 控制输出及退出状态。
 
-## 显式传入参数与测试
-
-`app.run()` 使用进程参数；传入 `argv=Some(...)` 可以直接测试命令行为，数组中不包含可执行程序名：
+## 导出定义与补全
 
 ```moonbit
-///|
-test "dispatch greet" {
-  let received = Ref("")
-  let app = @cmder.cli(name="hello", commands=[
-    @cmder.command(
-      name="greet",
-      options=[@cmder.string("name", required=true)],
-      run=Some(fn(ctx) {
-        received.val = ctx.get_string("name").unwrap_or("")
-      }),
-    ),
-  ])
-  app.run(argv=Some(["greet", "--name", "Alice"]))
-  assert_eq(received.val, "Alice")
-}
-```
-
-## 导出 CLI 定义
-
-构造 `app` 后可调用：
-
-```moonbit
-let schema_text = app.render_schema()       // String
-let schema_json = app.render_schema_json()  // Json
-```
-
-导出内容描述命令层级、选项类型、必填状态、默认值、位置参数和示例，适合生成文档或供工具读取。这里的 schema 是本库的 CLI 描述格式，不代表标准 JSON Schema；选项默认值以字符串表示，包括整数默认值。
-
-`positionals` 保留按参数名称索引的对象结构。每项包含从 0 开始的 `index`、`min_args`（0 或 1）和 `max_args`（1；最后一个无上限参数为 `null`）。消费者应按 `index` 排序，不依赖 JSON 对象键的顺序。
-
-库不会自动注册 `--schema`。仓库中的[示例程序](src/examples/cli/main.mbt) 在调用 `run` 前检查最后一个参数是否为 `--schema`，再输出定义。
-
-## Shell 补全
-
-构造 `app` 后，以下方法分别返回完整补全脚本：
-
-```moonbit
+let schema_text = app.render_schema()
+let schema_json = app.render_schema_json()
+let help = app.render_help(command_path=["db", "migrate"])
 let bash_script = app.render_bash_completion()
 let zsh_script = app.render_zsh_completion()
 let fish_script = app.render_fish_completion()
 ```
 
-应用需要自行提供脚本导出入口，或在构建流程中将这些字符串写入文件。库不会自动添加 `completion` 子命令。建议先构造完整的 `app`，再处理导出请求，避免在初始化 `app` 的回调中引用尚未定义的 `app`。
+这里的 CLI 描述格式不是标准 JSON Schema。它在参数所属命令中记录声明，包括 `global`、归一化的 `required`、有类型的默认值、位置参数和示例。整数默认值为 JSON 数字，字符串默认值为 JSON 字符串。根命令的位置参数/示例与子命令使用相同结构。位置参数元数据包含从零开始的 `index`、`min_args` 和 `max_args`（最后一个不限数量时为 null），消费者应按 `index` 排序。
 
-对于名为 `myapp` 的程序，将生成的脚本分别保存后，可在对应 shell 中加载：
+嵌套帮助和补全包含继承的 global 参数，不包含祖先局部参数。内置帮助、根级版本和 `help` 主题均参与补全；应用定义的长、短拼写分别覆盖对应内置拼写。`--` 之后停止建议。本库不生成自定义参数值或位置参数文件名建议。
 
-Bash 脚本使用内置补全变量，无需安装 `bash-completion`。补全遵循声明的命令路径与选项作用域；遇到 `--` 后停止建议命令和选项。内置帮助选项、根命令版本选项及 `help` 主题均参与补全；应用声明的长、短拼写分别覆盖相应内置拼写，与 argparse 一致。本库不生成自定义参数值或位置参数文件名补全。
+应用自行提供补全脚本/schema 导出入口，cmder 不自动添加 `--schema` 或补全子命令。应先完成应用构建，再处理导出请求。[可执行示例](src/examples/cli/main.mbt) 演示了 schema 导出。
 
 ```bash
-# Bash
 source ./myapp.bash
 ```
 
 ```zsh
-# Zsh：先初始化补全系统
 autoload -Uz compinit
 compinit
 source ./_myapp
 ```
 
 ```fish
-# Fish
 source ./myapp.fish
 ```
 
-## API 与源码
+`build_command(command)` 是显式的 argparse 互操作入口：验证定义并返回 `argparse.Command`，不执行 cmder 的整数输入检查或回调。普通消费者应使用 `CliApp::parse`。
 
-| 入口                                                                                                       | 用途                                                              |
-| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `cli(name=..., version=..., description=..., options=..., commands=...)`                                   | 构建应用                                                          |
-| `command(name=..., description=..., options=..., positionals=..., examples=..., subcommands=..., run=...)` | 定义命令                                                          |
-| `string`、`int`、`bool`、`positional`                                                                      | 定义参数                                                          |
-| `CliApp::run(argv=..., validate_types=...)`                                                                | 解析并调度，可选整数类型校验                                      |
-| `CliApp::parse(argv=..., validate_types=...)`                                                              | 无 I/O 或执行副作用的解析结果，可选类型校验                       |
-| `CliApp::dispatch(invocation)`                                                                             | 根据当前命令定义执行解析结果                                      |
-| `CliApp::render_help(command_path=...)`                                                                    | 渲染根命令或子命令帮助及显式示例                                  |
-| `Invocation::source_of` / `was_provided`                                                                   | 查询有效参数的来源                                                |
-| `CliApp::render_schema` / `render_schema_json`                                                             | 导出 CLI 定义                                                     |
-| `CliApp::render_bash_completion` / `render_zsh_completion` / `render_fish_completion`                      | 生成补全脚本                                                      |
-| `build_command(command)`                                                                                   | 转换为底层 `argparse.Command`，供需要直接使用 argparse 的场景调用 |
+## 从 0.3 迁移
 
-完整签名见 [公开 API](src/pkg.generated.mbti)，可运行示例见 [src/examples/cli](src/examples/cli/main.mbt)。
+| 旧用法                                         | 当前用法                                                              |
+| ---------------------------------------------- | --------------------------------------------------------------------- |
+| `default=Some(3)` / `default=Some("x")`        | `default=3` / `default="x"`                                           |
+| `run=Some(fn(ctx) { ... })`                    | `run=(ctx) => { ... }`，允许向外传播错误                              |
+| `app.run(argv=Some(args))`                     | `app.run(argv=args)`                                                  |
+| `get_int_checked(name)`                        | `get_int(name)`，非法输入现在会抛错                                   |
+| `validate_types=true`                          | 删除该参数，始终检查声明的整数                                        |
+| 隐式继承祖先参数                               | 将共享选项标记为 `global=true`                                        |
+| `app.dispatch(call)`                           | `call.dispatch()`                                                     |
+| 直接修改 Context/路径                          | `call.with_overrides(...)`                                            |
+| `Context.subcommand` / `get_subcommand()`      | `Invocation.command_path`                                             |
+| 公开定义记录字面量                             | 使用 `cli`、`command`、`string`、`int`、`bool`、`positional` 辅助函数 |
+| `app.name`、`app.commands`、`app.root_options` | `app.root.name`、`app.root.subcommands`、`app.root.options`           |
+
+`OptionType` 被携带有类型默认值的 `OptionKind` 替代。非法定义在构建阶段报错，不再等待第一次解析 argv。这些是有意的破坏性变更。
 
 ## 本地开发
 
-在仓库根目录运行：
-
 ```sh
-moon check
-moon test
+moon check --deny-warn --target native
+moon test --target native
+moon test --target js
+moon test --target wasm-gc
 moon run src/examples/cli --target native -- greet -n Alice
 moon run src/examples/cli --target native -- db migrate up --dry-run
 moon run src/examples/cli --target native -- --schema
+nu scripts/check-cli.nu
+nu scripts/check-completions.nu
 ```
 
-按目标验证时可使用 `moon test --target native`、`moon test --target js` 和 `moon test --target wasm-gc`。运行 JS 目标需要对应的 JavaScript 运行时。
-
-运行 `nu scripts/check-completions.nu` 可执行 shell 集成回归测试（需要 Nushell 0.116+、Bash、Fish 和 Zsh）。测试在干净 shell 中执行生成脚本；Zsh 在非交互 ZLE 环境下捕获补全组件调用。CI 在 native 目标运行此套件。
-
-运行 `nu scripts/check-cli.nu` 可在 JS、native、wasm-gc 上验证进程参数、`run` 的打印/退出行为和
-`parse` 向宿主返回结果的边界。
+进程检查覆盖 native/JS/wasm-gc。Shell 回归需要 Nushell 0.116+、Bash、Fish 和 Zsh，在干净 shell 中执行生成的脚本；Zsh 在非交互 ZLE 会话中捕获补全 widget 调用。CI 在 native 上运行 shell 检查。完整签名见[公开接口](src/pkg.generated.mbti)，新契约见[接口改进说明](docs/superpowers/specs/2026-11-05-cmder-interface.md)。
 
 ## 致谢与许可证
 
-感谢 [mizchi/admiral](https://github.com/mizchi/admiral) 的作者和贡献者。本包是该仓库的 fork，基于其实现继续修改；也感谢 [gunshi](https://github.com/kazupon/gunshi) 提供的设计灵感，以及 MoonBit 的 `core/argparse` 提供的解析能力。
+感谢 [mizchi/admiral](https://github.com/mizchi/admiral) 的作者及贡献者。本项目 fork 自该仓库，并在其实现上继续修改和维护。也感谢 [gunshi](https://github.com/kazupon/gunshi) 提供设计灵感，以及 MoonBit 的 `core/argparse` 提供参数解析。
 
-许可证：MIT（见 [moon.mod](moon.mod) 中的声明）。
+许可证为 MIT，详见 [moon.mod](moon.mod)。
