@@ -66,11 +66,18 @@ fn render_shell_scan(
   commands : Array[CompletionCommand],
   fn_name : String,
   limit : String,
+  file_fallback~ : Bool = false,
 ) -> Unit {
   sb.write_string("  local positional_seen=0\n")
   sb.write_string("  while (( pos < " + limit + " )); do\n")
   sb.write_string("    case \"" + dollar + "{words[pos]}\" in\n")
-  sb.write_string("      --) return ;;\n")
+  sb.write_string(
+    if file_fallback {
+      "      --) _files; return ;;\n"
+    } else {
+      "      --) return ;;\n"
+    },
+  )
   for opt in options {
     let patterns : Array[String] = []
     if opt.long is Some(name) {
@@ -185,12 +192,13 @@ fn render_bash_node(
 }
 
 ///|
-/// Generates a Bash completion script for this application.
+/// Generates a Bash completion script with Readline's default filename
+/// fallback when no command or option matches, including values and `--`.
 ///
 /// ```mbt check
 /// test {
 ///   assert_true(
-///     @cmder.cli(name="demo").render_bash_completion().contains("complete -F"),
+///     @cmder.cli(name="demo").render_bash_completion().contains("-o default -F"),
 ///   )
 /// }
 /// ```
@@ -241,7 +249,7 @@ pub fn CliApp::render_bash_completion(self : CliApp) -> String {
     completion_commands(self.root.subcommands, self.root.options),
   )
   sb.write_string(
-    "complete -F " +
+    "complete -o bashdefault -o default -F " +
     fn_name +
     " '" +
     escape_single_quote(self.root.name) +
@@ -257,26 +265,25 @@ fn render_zsh_options(
   sb : StringBuilder,
   options : Array[CompletionOption],
 ) -> Unit {
-  if options.length() == 0 {
-    return
-  }
   sb.write_string("  _arguments \\\n")
-  for i, opt in options {
+  for opt in options {
     let desc = escape_single_quote(
       escape_zsh_option_description(opt.description),
     )
-    let value_spec = if opt.takes_value { ":value:" } else { "" }
+    let value_spec = if opt.takes_value { ":value:_files" } else { "" }
     let spellings : Array[String] = []
     if opt.short is Some(short) {
-      spellings.push("'-\{short}[\{desc}]\{value_spec}'")
+      let suffix = if opt.takes_value { "+" } else { "" }
+      spellings.push("'-\{short}\{suffix}[\{desc}]\{value_spec}'")
     }
     if opt.long is Some(name) {
-      spellings.push("'--\{name}[\{desc}]\{value_spec}'")
+      let suffix = if opt.takes_value { "=" } else { "" }
+      spellings.push("'--\{name}\{suffix}[\{desc}]\{value_spec}'")
     }
     let flag = spellings.join(" ")
-    let end = if i < options.length() - 1 { " \\" } else { "" }
-    sb.write_string("    " + flag + end + "\n")
+    sb.write_string("    \{flag} \\\n")
   }
+  sb.write_string("    '*:path:_files'\n")
 }
 
 ///|
@@ -287,8 +294,15 @@ fn render_zsh_command(
 ) -> Unit {
   sb.write_string(fn_name + "() {\n")
   sb.write_string("  local start=" + dollar + "((pos - 1))\n")
-  render_shell_scan(sb, cmd.options, cmd.subcommands, fn_name, "CURRENT")
-  sb.write_string("  (( pos > CURRENT )) && return\n")
+  render_shell_scan(
+    sb,
+    cmd.options,
+    cmd.subcommands,
+    fn_name,
+    "CURRENT",
+    file_fallback=true,
+  )
+  sb.write_string("  if (( pos > CURRENT )); then _files; return; fi\n")
   if cmd.subcommands.length() > 0 {
     sb.write_string("  local -a commands\n")
     sb.write_string("  commands=(\n")
@@ -317,7 +331,9 @@ fn render_zsh_command(
 }
 
 ///|
-/// Generates a Zsh completion script for this application.
+/// Generates a Zsh completion script with filename fallback for positionals,
+/// values and tokens after `--`. Value options accept separated arguments,
+/// `--name=value` and `-nvalue`; no application-specific value list is inferred.
 ///
 /// ```mbt check
 /// test {
@@ -334,8 +350,15 @@ pub fn CliApp::render_zsh_completion(self : CliApp) -> String {
   sb.write_string("  local pos=2\n")
   let root_options = completion_options(self.root.options, version=true)
   let commands = completion_commands(self.root.subcommands, self.root.options)
-  render_shell_scan(sb, root_options, commands, fn_name, "CURRENT")
-  sb.write_string("  (( pos > CURRENT )) && return\n")
+  render_shell_scan(
+    sb,
+    root_options,
+    commands,
+    fn_name,
+    "CURRENT",
+    file_fallback=true,
+  )
+  sb.write_string("  if (( pos > CURRENT )); then _files; return; fi\n")
   sb.write_string("  local -a commands\n")
   sb.write_string("  commands=(\n")
   for cmd in commands {

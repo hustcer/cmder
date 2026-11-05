@@ -160,18 +160,18 @@ Only the selected callback runs. Selecting a group with a callback executes that
 
 ## Reading Arguments and Errors
 
-| Method                      | Result                  | Meaning                                          |
-| --------------------------- | ----------------------- | ------------------------------------------------ |
-| `get_bool(name)`            | `Bool`                  | False when absent                                |
-| `get_string(name)`          | `String?`               | First raw value, including integer spelling      |
-| `get_string_required(name)` | `String raise CliError` | Missing values raise `MissingOption` / `MissingPositional` |
-| `get_int(name)`             | `Int32? raise CliError` | None only for absence; format/range errors raise |
-| `get_int_required(name)`    | `Int32 raise CliError`  | Missing, malformed and overflow values raise     |
-| `get_strings(name)`         | `Array[String]`         | Fresh copy of all values; empty when absent      |
-| `get_bool_checked(name)`    | `Bool raise CliError`   | Declared Boolean flag; false when absent         |
-| `get_string_checked(name)`  | `String? raise CliError`| Declared text argument; None when absent         |
-| `get_strings_checked(name)` | `Array[String] raise CliError` | Declared text argument; fresh value copy   |
-| `source_of(name)`           | `ValueSource?`          | Effective provenance, or None when absent        |
+| Method                      | Result                         | Meaning                                                    |
+| --------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| `get_bool(name)`            | `Bool`                         | False when absent                                          |
+| `get_string(name)`          | `String?`                      | First raw value, including integer spelling                |
+| `get_string_required(name)` | `String raise CliError`        | Missing values raise `MissingOption` / `MissingPositional` |
+| `get_int(name)`             | `Int32? raise CliError`        | None only for absence; format/range errors raise           |
+| `get_int_required(name)`    | `Int32 raise CliError`         | Missing, malformed and overflow values raise               |
+| `get_strings(name)`         | `Array[String]`                | Fresh copy of all values; empty when absent                |
+| `get_bool_checked(name)`    | `Bool raise CliError`          | Declared Boolean flag; false when absent                   |
+| `get_string_checked(name)`  | `String? raise CliError`       | Declared text argument; None when absent                   |
+| `get_strings_checked(name)` | `Array[String] raise CliError` | Declared text argument; fresh value copy                   |
+| `source_of(name)`           | `ValueSource?`                 | Effective provenance, or None when absent                  |
 
 Raising getters validate visible names: misspellings and out-of-scope names raise `UnknownArgument`, and incompatible Boolean/text reads raise `ArgumentTypeMismatch`. The three non-raising getters retain their loose missing-name behavior for compatibility. Text getters accept strings, raw integers and positionals. `get_int` and `get_int_required` also accept string/positional text and share one conversion rule: invalid syntax raises `InvalidInteger(name, raw)`; overflow raises `IntegerOutOfRange(name, raw)`. Only an absent declared value returns None. Required getters distinguish `MissingOption` from `MissingPositional`.
 
@@ -235,7 +235,7 @@ let fish_script = app.render_fish_completion()
 
 The CLI description format is not standard JSON Schema. It describes declarations at their owning command, including `global`, normalized `required`, typed defaults, positionals and examples. Integer defaults are JSON numbers; string defaults are JSON strings. Root positionals/examples use the same structure as nested commands. Positional metadata includes zero-based `index`, `min_args` and `max_args` (null for the final unbounded positional); consumers should sort by `index`.
 
-Nested help and completion include inherited globals and exclude ancestor locals. Built-in help, root version and `help` topics are included; application-defined long and short spellings shadow builtins independently. Suggestions stop after `--`. Custom value and positional filename suggestions are not generated.
+Nested help and completion include inherited globals and exclude ancestor locals. Built-in help, root version and `help` topics are included; application-defined long and short spellings shadow builtins independently. Command and option suggestions stop after `--`, while the shell's filename completion remains available. Bash uses its default filename fallback when no generated candidate matches; Zsh uses `_files` for positional arguments, option values and tokens after `--`. Zsh value options support separate words, `--name=value` and `-nvalue`. Fish retains its native filename completion. Application-specific value lists are not generated; filename candidates do not imply that a value is valid for the application.
 
 Applications own script/schema export entry points; cmder does not add `--schema` or a completion subcommand. Construct the application before handling export requests. The [executable example](src/examples/cli/main.mbt) demonstrates schema export.
 
@@ -288,7 +288,7 @@ nu scripts/check-completions.nu
 nu scripts/check-readme.nu
 ```
 
-The process suite covers native/JS/wasm-gc. Shell regressions require Nushell 0.116+, Bash, Fish and Zsh; they execute generated scripts in clean shells, with Zsh widget calls captured outside an interactive ZLE session. CI runs shell checks on native. The README check compares both languages' code blocks and example metadata, compiles the actual MoonBit snippets against this worktree with warnings denied, and executes them on all three backends, including the Quick Start error exit. HTML `cmder-example` markers name each snippet, its bindings and any context snippet; keep those markers synchronized when editing examples. CI runs this check as well. See [the public interface](src/pkg.generated.mbti) and [the redesign contract](docs/superpowers/specs/2026-11-05-cmder-interface.md).
+The process suite covers native/JS/wasm-gc. Shell regressions require Nushell 0.116+, Bash, Fish and Zsh; they execute generated scripts in clean shells, capture Zsh widget calls, and use a bounded PTY session to test actual Bash Readline and Zsh ZLE filename completion. CI runs shell checks on native. The README check compares both languages' code blocks and example metadata, compiles the actual MoonBit snippets against this worktree with warnings denied, and executes them on all three backends, including the Quick Start error exit. HTML `cmder-example` markers name each snippet, its bindings and any context snippet; keep those markers synchronized when editing examples. CI runs this check as well. See [the public interface](src/pkg.generated.mbti) and [the redesign contract](docs/superpowers/specs/2026-11-05-cmder-interface.md).
 
 ## Acknowledgments and License
 

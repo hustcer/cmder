@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 - 2026-11-05
+
+### Fixed
+
+- Preserve Bash's default filename fallback and Zsh filename completion for positional arguments, option values and tokens after `--`.
+- Support both separated and attached Zsh option values, including `--name=value` and `-nvalue`, with filesystem candidates.
+- Verify filename completion in real Bash Readline and Zsh ZLE sessions, including quoted and escaped paths.
+
 ## 0.6.0 - 2026-11-05
 
 ### Changed

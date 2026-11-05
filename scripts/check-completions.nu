@@ -13,6 +13,12 @@ def main [] {
   cd $repo
   let scratch = (mktemp --directory)
   try {
+    let fixtures = ($scratch | path join fixtures)
+    mkdir ($fixtures | path join documents)
+    '' | save ($fixtures | path join documents 'quarter report.pptx')
+    '' | save ($fixtures | path join '--literal.pptx')
+    let inputrc = ($scratch | path join inputrc)
+    '' | save $inputrc
     for shell in [bash fish zsh] {
       let generated = (checked moon [run src/internal/completion_fixture --target native -- $shell])
       let completion_file = ($scratch | path join $'completion.($shell)')
@@ -29,6 +35,14 @@ def main [] {
         }
         print (checked $shell $args | str trim)
       }
+    }
+    with-env {
+      CMDER_COMPLETION_ROOT: $scratch
+      CMDER_COMPLETION_FIXTURES: $fixtures
+      CMDER_CAPTURE_FILE: ($scratch | path join captured-buffer.txt)
+      INPUTRC: $inputrc
+    } {
+      print (checked zsh [-f ($repo | path join scripts shell-tests completion-interactive.zsh)] | str trim)
     }
   } finally {
     # Only this invocation's mktemp directory is removed.

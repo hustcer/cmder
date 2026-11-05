@@ -45,7 +45,7 @@ test "builtin help and version spellings are shadowed independently" {
     assert_true(value.context.get_string("help") == Some("manual"))
   }
   let zsh = app.render_zsh_completion()
-  assert_true(zsh.contains("'-V[]:value:' '--help[]:value:'"))
+  assert_true(zsh.contains("'-V+[]:value:_files' '--help=[]:value:_files'"))
   assert_true(zsh.contains("'-h[Show help information.]'"))
   assert_true(zsh.contains("'--version[Show version information.]'"))
   assert_false(zsh.contains("'--help[Show help information.]'"))

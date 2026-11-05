@@ -160,18 +160,18 @@ Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db 
 
 ## 读取参数与错误处理
 
-| 方法                        | 返回值                  | 含义                                  |
-| --------------------------- | ----------------------- | ------------------------------------- |
-| `get_bool(name)`            | `Bool`                  | 缺失时返回 false                      |
-| `get_string(name)`          | `String?`               | 首个原始值，保留整数的原始写法        |
-| `get_string_required(name)` | `String raise CliError` | 缺失时抛出 `MissingOption` / `MissingPositional` |
-| `get_int(name)`             | `Int32? raise CliError` | 仅缺失返回 None，格式或范围错误会抛出 |
-| `get_int_required(name)`    | `Int32 raise CliError`  | 缺失、格式错误和溢出都会抛出          |
-| `get_strings(name)`         | `Array[String]`         | 所有值的独立副本，缺失时返回空数组    |
-| `get_bool_checked(name)`    | `Bool raise CliError`   | 检查已声明的 Boolean 开关，缺失为 false |
-| `get_string_checked(name)`  | `String? raise CliError`| 检查已声明的文本参数，缺失为 None     |
-| `get_strings_checked(name)` | `Array[String] raise CliError` | 检查声明并返回所有值的独立副本 |
-| `source_of(name)`           | `ValueSource?`          | 当前有效值的来源，缺失时返回 None     |
+| 方法                        | 返回值                         | 含义                                             |
+| --------------------------- | ------------------------------ | ------------------------------------------------ |
+| `get_bool(name)`            | `Bool`                         | 缺失时返回 false                                 |
+| `get_string(name)`          | `String?`                      | 首个原始值，保留整数的原始写法                   |
+| `get_string_required(name)` | `String raise CliError`        | 缺失时抛出 `MissingOption` / `MissingPositional` |
+| `get_int(name)`             | `Int32? raise CliError`        | 仅缺失返回 None，格式或范围错误会抛出            |
+| `get_int_required(name)`    | `Int32 raise CliError`         | 缺失、格式错误和溢出都会抛出                     |
+| `get_strings(name)`         | `Array[String]`                | 所有值的独立副本，缺失时返回空数组               |
+| `get_bool_checked(name)`    | `Bool raise CliError`          | 检查已声明的 Boolean 开关，缺失为 false          |
+| `get_string_checked(name)`  | `String? raise CliError`       | 检查已声明的文本参数，缺失为 None                |
+| `get_strings_checked(name)` | `Array[String] raise CliError` | 检查声明并返回所有值的独立副本                   |
+| `source_of(name)`           | `ValueSource?`                 | 当前有效值的来源，缺失时返回 None                |
 
 会抛错的 getter 检查可见参数名：拼写错误或超出作用域的名称抛出 `UnknownArgument`，Boolean 与文本类型不兼容时抛出 `ArgumentTypeMismatch`。三个不抛错的 getter 保留宽松的名称缺失行为，以兼容现有调用。文本 getter 可以读取字符串、整数原始写法及位置参数。`get_int` 和 `get_int_required` 也允许转换字符串及位置参数，格式非法抛出 `InvalidInteger(name, raw)`，溢出抛出 `IntegerOutOfRange(name, raw)`。只有已声明的参数缺失时才返回 None；必填 getter 区分 `MissingOption` 与 `MissingPositional`。
 
@@ -235,7 +235,7 @@ let fish_script = app.render_fish_completion()
 
 这里的 CLI 描述格式不是标准 JSON Schema。它在参数所属命令中记录声明，包括 `global`、归一化的 `required`、有类型的默认值、位置参数和示例。整数默认值为 JSON 数字，字符串默认值为 JSON 字符串。根命令的位置参数/示例与子命令使用相同结构。位置参数元数据包含从零开始的 `index`、`min_args` 和 `max_args`（最后一个不限数量时为 null），消费者应按 `index` 排序。
 
-嵌套帮助和补全包含继承的 global 参数，不包含祖先局部参数。内置帮助、根级版本和 `help` 主题均参与补全；应用定义的长、短拼写分别覆盖对应内置拼写。`--` 之后停止建议。本库不生成自定义参数值或位置参数文件名建议。
+嵌套帮助和补全包含继承的 global 参数，不包含祖先局部参数。内置帮助、根级版本和 `help` 主题均参与补全；应用定义的长、短拼写分别覆盖对应内置拼写。`--` 之后停止命令及选项建议，仍保留 shell 的文件名补全。Bash 在生成候选无匹配时使用默认文件名回退；Zsh 为位置参数、选项值及 `--` 后的内容调用 `_files`，带值选项支持分隔写法、`--name=value` 和 `-nvalue`。Fish 保留原生文件名补全。本库不生成应用专属值列表；文件名候选不表示该值符合应用的参数约束。
 
 应用自行提供补全脚本/schema 导出入口，cmder 不自动添加 `--schema` 或补全子命令。应先完成应用构建，再处理导出请求。[可执行示例](src/examples/cli/main.mbt) 演示了 schema 导出。
 
@@ -288,7 +288,7 @@ nu scripts/check-completions.nu
 nu scripts/check-readme.nu
 ```
 
-进程检查覆盖 native/JS/wasm-gc。Shell 回归需要 Nushell 0.116+、Bash、Fish 和 Zsh，在干净 shell 中执行生成的脚本；Zsh 在非交互 ZLE 会话中捕获补全 widget 调用。CI 在 native 上运行 shell 检查。README 检查会比较两种语言的代码块及示例元数据，直接提取 MoonBit 示例并引用当前工作树，以禁止警告模式编译，在三个后端执行，并检查快速开始示例的错误退出状态。HTML `cmder-example` 标记声明每个示例的名称、变量及所需上下文示例；修改示例时须同步这些标记。CI 同样运行该检查。完整签名见[公开接口](src/pkg.generated.mbti)，新契约见[接口改进说明](docs/superpowers/specs/2026-11-05-cmder-interface.md)。
+进程检查覆盖 native/JS/wasm-gc。Shell 回归需要 Nushell 0.116+、Bash、Fish 和 Zsh，在干净 shell 中执行生成的脚本，捕获 Zsh 补全 widget 调用，并通过有时限的 PTY 会话测试真实 Bash Readline 和 Zsh ZLE 文件名补全。CI 在 native 上运行 shell 检查。README 检查会比较两种语言的代码块及示例元数据，直接提取 MoonBit 示例并引用当前工作树，以禁止警告模式编译，在三个后端执行，并检查快速开始示例的错误退出状态。HTML `cmder-example` 标记声明每个示例的名称、变量及所需上下文示例；修改示例时须同步这些标记。CI 同样运行该检查。完整签名见[公开接口](src/pkg.generated.mbti)，新契约见[接口改进说明](docs/superpowers/specs/2026-11-05-cmder-interface.md)。
 
 ## 致谢与许可证
 

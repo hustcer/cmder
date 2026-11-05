@@ -1,7 +1,21 @@
 # Bash code is the test subject; orchestration lives in check-completions.nu.
 source "$CMDER_COMPLETION_FILE"
-read -r _ _ completion_function _ <<< "$(complete -p cmder-test)"
 checks=0
+select_completion() {
+  local registration
+  registration=$(complete -p "$1") || exit 1
+  if [[ "$registration" =~ -F[[:space:]]+([[:alnum:]_]+) ]]; then
+    completion_function=${BASH_REMATCH[1]}
+  else
+    printf 'Bash: missing completion function for %s\n' "$1" >&2
+    exit 1
+  fi
+  if [[ "$registration" != *'-o bashdefault'* || "$registration" != *'-o default'* ]]; then
+    printf 'Bash: default filename fallback missing for %s\n' "$1" >&2
+    exit 1
+  fi
+}
+select_completion cmder-test
 check() {
   local expected=$1
   shift
@@ -66,7 +80,7 @@ check '--trace' input.txt --tr
 source "$CMDER_NAMES_FILE"
 index=0
 for app_name in tool.exe 中文工具 foo-bar foo_bar tool+; do
-  read -r _ _ completion_function _ <<< "$(complete -p "$app_name")"
+  select_completion "$app_name"
   check "--ready$index" 发布.v2+ --rea
   check '发布.v2+' 发
   index=$((index + 1))

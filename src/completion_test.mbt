@@ -73,7 +73,7 @@ test "nested completion dispatches to the selected command" {
   inspect(zsh.contains("_c0; return; fi ;;"), content="true")
   inspect(zsh.contains("_c0_c0; return; fi ;;"), content="true")
   inspect(zsh.contains("_c0_c0_c0; return; fi ;;"), content="true")
-  inspect(zsh.contains("'--target[]:value:'"), content="true")
+  inspect(zsh.contains("'--target=[]:value:_files'"), content="true")
 }
 
 ///|
@@ -100,4 +100,21 @@ test "completion keeps colliding command names distinct and scans short groups" 
       content="true",
     )
   }
+}
+
+///|
+test "completion preserves shell filename fallbacks and Zsh value spellings" {
+  let app = @cmder.cli(name="files", options=[
+    @cmder.string("output", short='o'),
+    @cmder.bool("quiet", short='q'),
+  ])
+  let bash = app.render_bash_completion()
+  assert_true(bash.contains("complete -o bashdefault -o default -F "))
+  let zsh = app.render_zsh_completion()
+  assert_true(zsh.contains("'*:path:_files'"))
+  assert_true(zsh.contains("'--output=[]:value:_files'"))
+  assert_true(zsh.contains("'-o+[]:value:_files'"))
+  assert_true(zsh.contains("'--quiet[]'"))
+  assert_true(zsh.contains("'-q[]'"))
+  assert_false(zsh.contains("'--quiet=[]"))
 }
