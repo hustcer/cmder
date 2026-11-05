@@ -12,6 +12,19 @@
 - Immutable command definitions and parsed invocations with value provenance.
 - Help, version, JSON definitions and Bash/Zsh/Fish completion scripts.
 
+## Differences from admiral 0.1.2
+
+Since the fork, cmder has changed its package name and API. Migration requires updating imports and adapting code to the current interfaces:
+
+- Option helpers accept direct values for `short` and `default`, and definitions and contexts are read-only.
+- Root commands can have callbacks and positional arguments. Callbacks can propagate errors to the application.
+- Options are local by default; set `global=true` to make an option available to descendant commands. Required local options apply only to the selected command.
+- `parse` returns structured outcomes without executing callbacks or performing process I/O. A parsed invocation can be inspected, overridden and dispatched; argument provenance is available through `source_of`.
+- Command definitions are validated at construction, and integer options are checked for syntax and Int32 range during parsing.
+- JSON definitions include positional order and cardinality; generated help and shell completions reflect command and option scopes.
+
+See the sections below for current usage and [CHANGELOG.md](CHANGELOG.md) for version-specific changes.
+
 ## Installation
 
 ```sh
