@@ -1,12 +1,48 @@
 #!/usr/bin/env nu
-# Check the process boundary on each supported backend. Only the fixture decides
-# to print and exit; cmder's parse API must return every outcome to its host.
+# Check the process boundary on each supported backend. The application owns
+# error reporting and exit status; parse must return every outcome to its host.
 def run-fixture [target: string, args: list<string>]: nothing -> string {
   let result = (^moon run src/internal/completion_fixture --target $target -- ...$args | complete)
   if $result.exit_code != 0 {
     error make {msg: $'CLI fixture failed on ($target): ($result.stderr)($result.stdout)'}
   }
   $result.stdout | str trim
+}
+
+def check-example [target: string]: nothing -> nothing {
+  for case in [
+    {args: [greet --name Ada], expected: 'Hello, Ada!'}
+    {args: [greet --name Ada --count '2'], expected: "Hello, Ada!\nHello, Ada!"}
+    {args: [db migrate up --steps '2'], expected: "Applying 2 migrations...\nDone."}
+    {args: [--version], expected: '0.1.0'}
+  ] {
+    let result = (^moon run src/examples/cli --target $target -- ...$case.args | complete)
+    if $result.exit_code != 0 or ($result.stdout | str trim) != $case.expected or ($result.stderr | is-not-empty) {
+      error make {msg: $'Example success handling failed on ($target): ($result)'}
+    }
+  }
+  let help = (^moon run src/examples/cli --target $target -- greet --help | complete)
+  if $help.exit_code != 0 or not ($help.stdout | str contains 'Usage: myapp greet') or ($help.stderr | is-not-empty) {
+    error make {msg: $'Example help handling failed on ($target): ($help)'}
+  }
+  for case in [
+    {args: [greet --name Ada --count bad], expected: "invalid integer for 'count': 'bad'"}
+    {args: [greet --name Ada --count '2147483648'], expected: "integer out of Int32 range for 'count': '2147483648'"}
+    {args: [db migrate up --steps bad], expected: "invalid integer for 'steps': 'bad'"}
+    {args: [greet], expected: '--name'}
+    {args: [db], expected: "missing subcommand for 'db'"}
+  ] {
+    let result = (^moon run src/examples/cli --target $target -- ...$case.args | complete)
+    if $result.exit_code != 1 {
+      error make {msg: $'Example did not report failure on ($target): ($result)'}
+    }
+    # MoonBit's eprintln currently falls back to stdout on wasm-gc.
+    let diagnostic = if $target == 'wasm-gc' { $result.stdout } else { $result.stderr }
+    if not ($diagnostic | str contains $case.expected) or ($target != 'wasm-gc' and ($result.stdout | is-not-empty)) {
+      error make {msg: $'Example diagnostic handling failed on ($target): ($result)'}
+    }
+  }
+  print $'Example ($target): 10 process checks passed'
 }
 
 def main [] {
@@ -35,5 +71,6 @@ def main [] {
       }
     }
     print $'CLI ($target): 6 process checks passed'
+    check-example $target
   }
 }

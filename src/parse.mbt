@@ -115,6 +115,9 @@ fn invocation_from_matches(matches : @argparse.Matches) -> Invocation {
 /// ranges are imposed. Raw strings and provenance are preserved; legacy get_int
 /// still has its digit-length cap. Validation is a parse-time check, not a
 /// guarantee about a context the caller subsequently mutates.
+/// Inherited values are checked against their owning definitions; successful
+/// validation does not certify the merged context against the selected command's
+/// option types.
 ///
 /// ```mbt check
 /// test {

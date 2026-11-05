@@ -38,6 +38,8 @@ pkgtype(kind: "executable")
 
 将下面的代码放入可执行包的 `main.mbt`：
 
+这些可执行示例使用 `@env.exit`；请同时在该包的导入中添加 `"moonbitlang/core/env"`。
+
 ```moonbit
 ///|
 fn main {
@@ -57,10 +59,10 @@ fn main {
         examples=["hello greet -n Alice", "hello greet -n Bob -l -c 2"],
         run=Some(fn(ctx) {
           let name = ctx.get_string_required("name") catch {
-            err => { println(err); return }
+            err => { eprintln(err); @env.exit(1) }
           }
           let count = ctx.get_int_required("count") catch {
-            err => { println(err); return }
+            err => { eprintln(err); @env.exit(1) }
           }
           for _ in 0..<count {
             let message = "Hello, \{name}!"
@@ -70,7 +72,7 @@ fn main {
       ),
     ],
   )
-  app.run() catch { err => println(err) }
+  app.run(validate_types=true) catch { err => { eprintln(err); @env.exit(1) } }
 }
 ```
 
@@ -87,7 +89,8 @@ HELLO, BOB!
 
 使用 `hello --help` 查看命令列表，`hello greet --help` 查看命令参数，`hello --version` 查看版本。
 
-以上示例将错误打印到标准输出。应用可以自行决定错误输出方式和退出码；打印错误并返回并不等于以非零状态退出。
+以上可执行示例使用 `eprintln` 报告错误，并以状态码 1 退出。Native 和 JS 将诊断写入 stderr；
+当前 wasm-gc 运行时会退回 stdout。错误输出和退出状态由应用自行决定。
 
 ## 选项与位置参数
 
@@ -241,21 +244,24 @@ match app.parse(argv=["go", "--count", "3"]) {
 调度层不执行帮助或版本输出，也不退出进程；回调仍可执行其自身的副作用。
 每次调用都会再次执行。调度根据当前应用定义解析命令路径，调用方应使用兼容的定义；
 它不认证 invocation 的来源，也不重新校验编辑后的 context。
+通常应在同一个 app 上完成解析与调度，并在调度前完成宿主对 context 的修改和检查。
 
 ```moonbit
 let app = @cmder.cli(name="app", commands=[
   @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))],
     run=Some(fn(ctx) {
       let count = ctx.get_int_checked("count") catch {
-        err => { println(err.message()); return }
+        err => { eprintln(err.message()); @env.exit(1) }
       }
       println(count.unwrap_or(1))
     })),
 ])
 match app.parse(argv=["go", "--count", "2"], validate_types=true) {
-  Parsed(call) => app.dispatch(call) catch { err => println(err.message()) }
+  Parsed(call) => app.dispatch(call) catch {
+    err => { eprintln(err.message()); @env.exit(1) }
+  }
   Help(text) | Version(text) => println(text)
-  Failed(error) => println(error.message())
+  Failed(error) => { eprintln(error.message()); @env.exit(1) }
 }
 ```
 
@@ -263,6 +269,21 @@ match app.parse(argv=["go", "--count", "2"], validate_types=true) {
 检查十进制 `Int32` 的整数格式与溢出。在继承值合并前，每个选中命令层级的值和默认值
 都按该层自身的定义校验。即使后代会覆盖某个祖先值，非法的祖先值仍会被拒绝；
 缺失的子级选项不会将继承的字符串重新解释成整数。未选中的分支不进行类型校验。
+
+例如，下面的输入能够通过校验，因为 `"text"` 属于根级字符串选项，子级整数选项没有提供：
+
+```moonbit
+let app = @cmder.cli(name="app", options=[@cmder.string("count")], commands=[
+  @cmder.command(name="go", options=[@cmder.int("count")]),
+])
+let outcome = app.parse(argv=["--count", "text", "go"], validate_types=true)
+```
+
+结果为 `Parsed`，但其 context 继承了 `count="text"`，因此
+`get_int_checked("count")` 会抛出 `CliError::InvalidInteger("count", "text")`。
+改为传入 `--count text go --count 2`，则会提供合法的子级整数。
+校验通过只保证各层输入符合其所属定义，不保证合并后的 context 满足选中命令的选项类型。
+跨层级用同名参数表达同一概念时，建议保持类型一致；表达不同概念时应使用不同名称。
 
 帮助、版本及结构性解析失败保持原有优先级。类型校验不执行回调，`run` 只在解析和校验
 成功后调度。原始字符串、argv 和来源快照保持不变。读取整数时仍应使用 checked getter：

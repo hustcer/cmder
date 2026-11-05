@@ -88,6 +88,8 @@ fn inherit_context(parent : Context, child : Context) -> Context {
 /// help/version I/O; callbacks retain their own effects. Resolve the path against
 /// this application's current definitions, not a definition snapshot. The caller
 /// is responsible for pairing the invocation with compatible definitions.
+/// Prefer parsing and dispatching on the same application, completing any host
+/// edits and checks before dispatch.
 /// Empty roots, unknown paths, missing subcommands, and missing handlers raise
 /// the corresponding CliError before any callback executes. Repeated calls
 /// deliberately execute the callback again.

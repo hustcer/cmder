@@ -108,6 +108,22 @@ test "type validation honors owning scopes before flattening inherited values" {
     child.parse(argv=["--value", "text", "go"], validate_types=true),
   )
   assert_true(inherited.context.get_string("value") == Some("text"))
+  try inherited.context.get_int_checked("value") catch {
+    @cmder.CliError::InvalidInteger("value", "text") => ()
+    err => raise err
+  } noraise {
+    _ =>
+      fail(
+        "scope validation does not certify the inherited value as an integer",
+      )
+  }
+  let explicit = expect_invocation(
+    child.parse(
+      argv=["--value", "text", "go", "--value", "2"],
+      validate_types=true,
+    ),
+  )
+  assert_true(explicit.context.get_int_checked("value") == Some(2))
   assert_true(
     child.parse(
       argv=["--value", "text", "go", "--value", "bad"],

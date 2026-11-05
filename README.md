@@ -38,6 +38,9 @@ pkgtype(kind: "executable")
 
 Place the following code in your executable package's `main.mbt`:
 
+These executable examples use `@env.exit`; also add `"moonbitlang/core/env"` to
+that package's imports.
+
 ```moonbit
 ///|
 fn main {
@@ -57,10 +60,10 @@ fn main {
         examples=["hello greet -n Alice", "hello greet -n Bob -l -c 2"],
         run=Some(fn(ctx) {
           let name = ctx.get_string_required("name") catch {
-            err => { println(err); return }
+            err => { eprintln(err); @env.exit(1) }
           }
           let count = ctx.get_int_required("count") catch {
-            err => { println(err); return }
+            err => { eprintln(err); @env.exit(1) }
           }
           for _ in 0..<count {
             let message = "Hello, \{name}!"
@@ -70,7 +73,7 @@ fn main {
       ),
     ],
   )
-  app.run() catch { err => println(err) }
+  app.run(validate_types=true) catch { err => { eprintln(err); @env.exit(1) } }
 }
 ```
 
@@ -87,7 +90,9 @@ HELLO, BOB!
 
 Use `hello --help` to list commands, `hello greet --help` to view command arguments, and `hello --version` to display the version.
 
-This example prints errors to standard output. Applications can choose their own error reporting and exit codes; printing an error and returning does not imply a nonzero exit status.
+This executable reports errors with `eprintln` and exits with status 1. Native and
+JS write these diagnostics to stderr; the current wasm-gc runtime falls back to
+stdout. Error reporting and exit status are application policy.
 
 ## Options and Positional Arguments
 
@@ -252,21 +257,25 @@ The dispatch layer performs no help/version I/O or process exit; callbacks retai
 their own effects. Each call executes again. Dispatch resolves the path against the
 current application definitions, so callers must pair invocations with compatible
 definitions; it does not certify their origin or revalidate edited contexts.
+The usual workflow is to parse and dispatch on the same app, completing any host
+edits and checks before dispatch.
 
 ```moonbit
 let app = @cmder.cli(name="app", commands=[
   @cmder.command(name="go", options=[@cmder.int("count", default=Some(1))],
     run=Some(fn(ctx) {
       let count = ctx.get_int_checked("count") catch {
-        err => { println(err.message()); return }
+        err => { eprintln(err.message()); @env.exit(1) }
       }
       println(count.unwrap_or(1))
     })),
 ])
 match app.parse(argv=["go", "--count", "2"], validate_types=true) {
-  Parsed(call) => app.dispatch(call) catch { err => println(err.message()) }
+  Parsed(call) => app.dispatch(call) catch {
+    err => { eprintln(err.message()); @env.exit(1) }
+  }
   Help(text) | Version(text) => println(text)
-  Failed(error) => println(error.message())
+  Failed(error) => { eprintln(error.message()); @env.exit(1) }
 }
 ```
 
@@ -276,6 +285,23 @@ and defaults at each selected command level against that level's own definitions
 before inheritance merges same-name values. Invalid ancestor values are rejected even
 when a descendant would shadow them. An absent child option does not reinterpret an
 inherited string as an integer. Unselected branches are not type-checked.
+
+For example, this input passes validation because `"text"` belongs to the root
+string option and the child integer option is absent:
+
+```moonbit
+let app = @cmder.cli(name="app", options=[@cmder.string("count")], commands=[
+  @cmder.command(name="go", options=[@cmder.int("count")]),
+])
+let outcome = app.parse(argv=["--count", "text", "go"], validate_types=true)
+```
+
+The outcome is `Parsed`, but its context inherits `count="text"`, so
+`get_int_checked("count")` raises `CliError::InvalidInteger("count", "text")`.
+Passing `--count text go --count 2` supplies a valid child integer instead.
+Validation checks each scope's input; it does not certify the merged context
+against the selected command's option types. Keep the same type when reusing a
+name for the same concept across scopes, and use distinct names for different concepts.
 
 Help, version, and structural parser failures keep their existing precedence. Type
 validation never invokes callbacks; `run` dispatches only after successful parsing

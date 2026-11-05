@@ -27,12 +27,17 @@ fn main {
           "myapp greet --name Alice", "myapp greet --name Bob --loud --count 3",
         ],
         run=Some(fn(ctx) {
-          let name = ctx.get_string_required("name") catch { _ => return }
+          let name = ctx.get_string_required("name") catch {
+            err => {
+              eprintln(err)
+              @env.exit(1)
+            }
+          }
           let loud = ctx.get_bool("loud")
           let count = ctx.get_int_checked("count") catch {
             err => {
-              println(err.message())
-              return
+              eprintln(err.message())
+              @env.exit(1)
             }
           }
           let count = count.unwrap_or(1)
@@ -66,8 +71,8 @@ fn main {
               let dry = ctx.get_bool("dry-run")
               let steps = ctx.get_int_checked("steps") catch {
                 err => {
-                  println(err.message())
-                  return
+                  eprintln(err.message())
+                  @env.exit(1)
                 }
               }
               if dry {
@@ -95,8 +100,8 @@ fn main {
             run=Some(fn(ctx) {
               let steps = ctx.get_int_checked("steps") catch {
                 err => {
-                  println(err.message())
-                  return
+                  eprintln(err.message())
+                  @env.exit(1)
                 }
               }
               let steps = steps.unwrap_or(1)
@@ -131,6 +136,9 @@ fn main {
     return
   }
   app.run(validate_types=true) catch {
-    err => println(err)
+    err => {
+      eprintln(err)
+      @env.exit(1)
+    }
   }
 }
