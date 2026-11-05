@@ -46,8 +46,10 @@ check_shell() {
       zpty -b cmder-interactive bash --noprofile --norc -i || return 1
       zpty -w cmder-interactive 'source "$CMDER_COMPLETION_FILE"; cd "$CMDER_COMPLETION_FIXTURES"; set -o emacs; bind '\''"\C-i": complete'\''; _cmder_capture() { printf "%s\n" "$READLINE_LINE" > "$CMDER_CAPTURE_FILE"; READLINE_LINE=; READLINE_POINT=0; }; bind -x '\''"\C-x\C-r":_cmder_capture'\''; printf ready > "$CMDER_CAPTURE_FILE"' || return 1
     else
+      # Exercise noninteractive startup even when fpath contains an insecure directory.
+      local -x FPATH="$CMDER_INSECURE_FPATH:$FPATH"
       zpty -b cmder-interactive zsh -f || return 1
-      zpty -w cmder-interactive 'autoload -Uz compinit; compinit -D; source "$CMDER_COMPLETION_FILE"; cd "$CMDER_COMPLETION_FIXTURES"; bindkey -e; _cmder_capture() { print -r -- "$BUFFER" > "$CMDER_CAPTURE_FILE"; BUFFER=; zle -R; }; zle -N cmder-capture _cmder_capture; bindkey "^X^R" cmder-capture; zle-line-init() { print -n ready > "$CMDER_CAPTURE_FILE"; }; zle -N zle-line-init' || return 1
+      zpty -w cmder-interactive 'autoload -Uz compinit; compinit -i -D; source "$CMDER_COMPLETION_FILE"; cd "$CMDER_COMPLETION_FIXTURES"; bindkey -e; _cmder_capture() { print -r -- "$BUFFER" > "$CMDER_CAPTURE_FILE"; BUFFER=; zle -R; }; zle -N cmder-capture _cmder_capture; bindkey "^X^R" cmder-capture; zle-line-init() { print -n ready > "$CMDER_CAPTURE_FILE"; }; zle -N zle-line-init' || return 1
     fi
     wait_for_buffer || return 1
     check_buffer 'cmder-test documents/quarter' 'cmder-test documents/quarter\ report.pptx ' || return 1

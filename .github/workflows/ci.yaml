@@ -32,7 +32,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         uses: hustcer/setup-nu@v3
         with:
-          version: '0.116.0'
+          version: '*'
       - name: Test generated completions
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: nu scripts/check-completions.nu
@@ -40,5 +40,5 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: nu scripts/check-cli.nu
       - name: Check bilingual README examples
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
+        if: matrix.target == 'native'
         run: nu --no-config-file scripts/check-readme.nu
