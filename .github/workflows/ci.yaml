@@ -25,20 +25,23 @@ jobs:
         run: moon check --deny-warn --target ${{ matrix.target }}
       - name: Moon test
         run: moon test --target ${{ matrix.target }}
-      - name: Install completion test shells
+      - name: Install completion test shells (Ubuntu)
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: sudo apt-get update && sudo apt-get install -y fish zsh
+      - name: Install completion test shells (macOS)
+        if: matrix.os == 'macos-latest' && matrix.target == 'native'
+        run: brew install bash zsh fish
       - name: Install Nushell
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
+        if: matrix.target == 'native' && matrix.os != 'windows-latest'
         uses: hustcer/setup-nu@v3
         with:
           version: '*'
       - name: Test generated completions
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
+        if: matrix.target == 'native' && matrix.os != 'windows-latest'
         run: nu scripts/check-completions.nu
       - name: Test CLI process boundaries
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: nu scripts/check-cli.nu
       - name: Check bilingual README examples
-        if: matrix.target == 'native'
+        if: matrix.target == 'native' && matrix.os != 'windows-latest'
         run: nu --no-config-file scripts/check-readme.nu
