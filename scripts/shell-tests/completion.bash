@@ -1,5 +1,6 @@
 # Bash code is the test subject; orchestration lives in check-completions.nu.
 source "$CMDER_COMPLETION_FILE"
+read -r _ _ completion_function _ <<< "$(complete -p cmder-test)"
 checks=0
 check() {
   local expected=$1
@@ -9,7 +10,7 @@ check() {
   COMP_LINE=${test_line:-"${COMP_WORDS[*]}"}
   COMP_POINT=${cursor_point:-${#COMP_LINE}}
   COMPREPLY=(stale)
-  _cmder_test cmder-test "${cursor_word-${COMP_WORDS[COMP_CWORD]}}"
+  "$completion_function" cmder-test "${cursor_word-${COMP_WORDS[COMP_CWORD]}}"
   local actual="${COMPREPLY[*]}"
   if [[ "$actual" != "$expected" ]]; then
     printf 'Bash: %s: expected <%s>, got <%s>\n' "$*" "$expected" "$actual" >&2
@@ -62,4 +63,12 @@ check '--value' quoting --val
 check '' input.txt fi
 check '' input.txt files --f
 check '--trace' input.txt --tr
+source "$CMDER_NAMES_FILE"
+index=0
+for app_name in tool.exe 中文工具 foo-bar foo_bar tool+; do
+  read -r _ _ completion_function _ <<< "$(complete -p "$app_name")"
+  check "--ready$index" 发布.v2+ --rea
+  check '发布.v2+' 发
+  index=$((index + 1))
+done
 printf 'Bash: %s behavior checks passed\n' "$checks"

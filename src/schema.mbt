@@ -49,15 +49,19 @@ fn positional_def_to_json(
 }
 
 ///|
-fn generate_example(path : String, cmd : CommandDef) -> String {
+fn generate_example(
+  path : String,
+  cmd : CommandDef,
+  globals_only~ : Bool = false,
+) -> String {
   let parts = [path]
   for opt in cmd.options {
-    if opt.required {
+    if opt.required && (!globals_only || opt.global) {
       parts.push("--\{opt.name} <\{opt.name}>")
     }
   }
   for pos in cmd.positionals {
-    if pos.required {
+    if pos.required && !globals_only {
       parts.push("<\{pos.name}>")
     }
   }
@@ -97,7 +101,7 @@ fn command_def_to_json(cmd : CommandDef, path : String) -> Json {
     for sub in cmd.subcommands {
       commands[sub.name] = command_def_to_json(
         sub,
-        "\{generate_example(path, cmd)} \{sub.name}",
+        "\{generate_example(path, cmd, globals_only=true)} \{sub.name}",
       )
     }
     m["commands"] = Json::object(commands)

@@ -82,10 +82,11 @@ fn invocation_from_matches(
 ) -> Invocation raise CliError {
   let path : Array[String] = []
   let globals : Array[OptionDef] = []
+  let scopes : Array[(CommandDef, @argparse.Matches)] = []
   let mut selected = app.root
   let mut current = matches
   while true {
-    validate_scope_types(selected, current)
+    scopes.push((selected, current))
     guard current.subcommand is Some((name, child)) else { break }
     for option in selected.options {
       if option.global {
@@ -98,6 +99,16 @@ fn invocation_from_matches(
     }
     selected = command
     current = child
+  }
+  // Locals belong only to the selected callback. Structural parser checks and
+  // required-value checks precede type validation, including ancestor input.
+  for option in selected.options {
+    if option.required && !current.values.contains(option.name) {
+      raise CliError::MissingOption(option.name)
+    }
+  }
+  for (command, scope_matches) in scopes {
+    validate_scope_types(command, scope_matches)
   }
   let specs : Map[String, ArgumentSpec] = Map([])
   for option in globals {
@@ -142,6 +153,9 @@ fn invocation_from_matches(
 /// Parses explicit argv without process I/O or callbacks. All declared integer
 /// inputs in selected scopes are checked for signed decimal Int32 syntax and
 /// overflow. Help/version and structural parser failures retain precedence.
+/// Required local options constrain only the selected command; required globals
+/// constrain their declaring command and descendants. Missing selected locals
+/// return Failed(MissingOption(name)). Explicit ancestor values remain checked.
 ///
 /// ```mbt check
 /// test {
@@ -153,12 +167,19 @@ fn invocation_from_matches(
 /// }
 /// ```
 pub fn CliApp::parse(self : CliApp, argv~ : ArrayView[String]) -> ParseOutcome {
-  match build_cli_command(self).parse_outcome(argv~) {
+  let parser = build_parser(self.root, version=self.version, mode=Invocation)
+  match parser.parse_outcome(argv~) {
     Parsed(matches) =>
       Parsed(invocation_from_matches(self, matches)) catch {
         error => Failed(error)
       }
-    Help(text) => Help(text)
+    // Render help from the original declarations so local required annotations
+    // remain accurate. Let argparse resolve help routing, aliases and shadowing.
+    Help(_) =>
+      match build_cli_command(self).parse_outcome(argv~) {
+        Help(text) => Help(text)
+        _ => abort("help routing must not depend on required validation")
+      }
     Version(text) => Version(text)
     Failed(error) => Failed(CliError::ParseError(error.to_string()))
   }

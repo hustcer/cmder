@@ -32,6 +32,8 @@ pkgtype(kind: "executable")
 
 单命令工具无需额外创建子命令。将下面的代码放入 `main.mbt`：
 
+<!-- cmder-example {"id":"quick-start","kind":"program","args":["-n","Ada"],"stdout":"Hello, Ada!\n","fail_args":["-n","Ada","--count","bad"],"error":"invalid integer for 'count': 'bad'"} -->
+
 ```moonbit
 ///|
 fn main raise {
@@ -74,9 +76,11 @@ HELLO, BOB!
 
 `cli` 在构建时验证完整定义树。名称非法、参数/短选项/子命令重名、位置参数顺序错误，以及与继承 global 参数冲突，都会抛出 `CliError::InvalidDefinition`。因此示例使用 `fn main raise`。
 
-命令和参数名使用 ASCII 字母、数字、下划线及连字符，首尾不能是连字符。短选项使用一个 ASCII 字母、数字或下划线。这使解析拼写与生成的 shell 代码保持一致；描述仍可使用任意文本。
+应用名和子命令名使用单个单词，允许 ASCII 字母、数字、下划线、连字符、点号、加号及可打印的非 ASCII 字符；拒绝空白、控制字符及前导连字符。`tool.exe`、`中文工具` 和 `release.v2+` 均合法。选项及位置参数标识符使用 ASCII 字母、数字、下划线和连字符，不允许前导连字符。短选项使用一个 ASCII 字母、数字或下划线。补全函数标识符独立于命令拼写编码生成；描述仍可使用任意文本。
 
 ## 选项与位置参数
+
+<!-- cmder-example {"id":"options","kind":"pure","binds":["options"]} -->
 
 ```moonbit
 let options = [
@@ -92,6 +96,8 @@ let options = [
 `parse` 和 `run` 始终校验整数选项：允许带负号的十进制 Int32，范围为 -2147483648 到 2147483647。前导零没有位数限制。负数支持 `--delta -1`、`-d -1` 和 `--delta=-1`。`get_string` 仍能读取原始写法。正数、业务范围和参数关系由应用自行校验。
 
 根命令和子命令都支持 `positionals`。必填位置参数必须位于可选参数之前；除最后一个之外，每个位置参数最多接受一个值，最后一个接受剩余所有值：
+
+<!-- cmder-example {"id":"positionals","kind":"raising","binds":["app"]} -->
 
 ```moonbit
 let app = @cmder.cli(
@@ -112,6 +118,8 @@ let app = @cmder.cli(
 带子命令的命令可以包含可选位置参数，但不能包含必填位置参数：argparse 会让该组合的子命令不可达，因此构建时会拒绝。一旦开始读取位置参数，后续单词属于该命令的位置参数执行流程，不能再选择子命令。
 
 ## 子命令与作用域
+
+<!-- cmder-example {"id":"subcommands","kind":"raising","binds":["app"]} -->
 
 ```moonbit
 let app = @cmder.cli(
@@ -139,6 +147,8 @@ Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db 
 
 其他参数保持局部作用域。回调只能读取选中命令的局部参数和继承的 global 参数，不能读取祖先局部值。不同作用域的局部参数可以同名，但不会合并：根级 `string("count")` 不会为子级 `int("count")` 提供值。需要后代读取的选项应标记为 global。
 
+局部 `required=true` 选项只在其所属命令被选中时必填。根级局部必填 `token` 不会阻止 `myapp db migrate` 执行，也不会出现在该回调的参数中。显式提供的祖先局部输入仍须通过类型校验。必填 global 在声明层级及其整个后代子树中都必填，并始终可由后代回调读取。存在子命令时，帮助会列出局部必填选项并解释其作用域；后代自动示例包含必填祖先 global，不包含祖先局部参数。缺少选中命令的局部必填选项时返回 `Failed(CliError::MissingOption(name))`。
+
 只执行选中命令的回调。选择带回调的分组命令会执行该回调；选择更深的子命令时，只执行更深的回调。没有回调时，根命令调度抛出 `MissingCommand`，分组抛出 `MissingSubcommand`，叶子命令抛出 `MissingHandler`。
 
 ## 读取参数与错误处理
@@ -162,6 +172,8 @@ Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db 
 `parse` 要求显式 argv，数组不包含可执行程序名。它不执行进程 I/O、不读取进程环境，也不执行回调，返回 `Parsed`、`Help`、`Version` 或 `Failed`。帮助、版本及结构性解析错误保持 argparse 相对于整数检查的原有优先级；只检查选中作用域的输入类型。
 
 将以下流程放入允许传播错误的宿主函数，再由应用入口像“快速开始”一样统一处理传播的错误。
+
+<!-- cmder-example {"id":"host-dispatch","kind":"raising","stdout":"3\n"} -->
 
 ```moonbit
 let app = @cmder.cli(name="app", options=[@cmder.int("count", default=1)], run=ctx => {
@@ -200,6 +212,8 @@ match app.parse(argv=["--count", "2"]) {
 
 ## 导出定义与补全
 
+<!-- cmder-example {"id":"exports","kind":"raising","context":"subcommands","binds":["schema_text","schema_json","help","bash_script","zsh_script","fish_script"]} -->
+
 ```moonbit
 let schema_text = app.render_schema()
 let schema_json = app.render_schema_json()
@@ -229,7 +243,7 @@ source ./_myapp
 source ./myapp.fish
 ```
 
-`build_command(command)` 是显式的 argparse 互操作入口：验证定义并返回 `argparse.Command`，不执行 cmder 的整数输入检查或回调。普通消费者应使用 `CliApp::parse`。
+`build_command(command)` 是显式的 argparse 互操作入口：验证定义并返回 `argparse.Command`，保留 argparse 对祖先必填参数的原始语义，不执行 cmder 的选中命令局部必填检查、整数输入检查或回调。普通消费者应使用 `CliApp::parse`。
 
 ## 从 0.3 迁移
 
@@ -261,9 +275,10 @@ moon run src/examples/cli --target native -- db migrate up --dry-run
 moon run src/examples/cli --target native -- --schema
 nu scripts/check-cli.nu
 nu scripts/check-completions.nu
+nu scripts/check-readme.nu
 ```
 
-进程检查覆盖 native/JS/wasm-gc。Shell 回归需要 Nushell 0.116+、Bash、Fish 和 Zsh，在干净 shell 中执行生成的脚本；Zsh 在非交互 ZLE 会话中捕获补全 widget 调用。CI 在 native 上运行 shell 检查。完整签名见[公开接口](src/pkg.generated.mbti)，新契约见[接口改进说明](docs/superpowers/specs/2026-11-05-cmder-interface.md)。
+进程检查覆盖 native/JS/wasm-gc。Shell 回归需要 Nushell 0.116+、Bash、Fish 和 Zsh，在干净 shell 中执行生成的脚本；Zsh 在非交互 ZLE 会话中捕获补全 widget 调用。CI 在 native 上运行 shell 检查。README 检查会比较两种语言的代码块及示例元数据，直接提取 MoonBit 示例并引用当前工作树，以禁止警告模式编译，在三个后端执行，并检查快速开始示例的错误退出状态。HTML `cmder-example` 标记声明每个示例的名称、变量及所需上下文示例；修改示例时须同步这些标记。CI 同样运行该检查。完整签名见[公开接口](src/pkg.generated.mbti)，新契约见[接口改进说明](docs/superpowers/specs/2026-11-05-cmder-interface.md)。
 
 ## 致谢与许可证
 

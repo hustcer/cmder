@@ -14,4 +14,7 @@ check:
 test:
     moon test --target {{target}}
 
-release-check: fmt info check test
+docs:
+    nu --no-config-file scripts/check-readme.nu
+
+release-check: fmt info check test docs

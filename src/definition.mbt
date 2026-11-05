@@ -4,11 +4,20 @@ fn valid_name_char(c : Char) -> Bool {
 }
 
 ///|
-fn check_name(name : String, description : String) -> Unit raise CliError {
-  if name.is_empty() ||
-    name.has_prefix("-") ||
-    name.has_suffix("-") ||
-    !name.iter().all(valid_name_char) {
+fn valid_command_char(c : Char) -> Bool {
+  valid_name_char(c) ||
+  c is ('.' | '+') ||
+  (!c.is_ascii() && c.is_printable() && !c.is_whitespace())
+}
+
+///|
+fn check_name(
+  name : String,
+  description : String,
+  command~ : Bool = false,
+) -> Unit raise CliError {
+  let valid_char = if command { valid_command_char } else { valid_name_char }
+  if name.is_empty() || name.has_prefix("-") || !name.iter().all(valid_char) {
     raise CliError::InvalidDefinition("\{description}: invalid name '\{name}'")
   }
 }
@@ -22,7 +31,7 @@ fn validate_definition(
   let path = ancestors.to_owned()
   path.push(cmd.name)
   let scope = path.join(" ")
-  check_name(cmd.name, "command")
+  check_name(cmd.name, "command", command=true)
   let names : Map[String, Bool] = Map([])
   let shorts : Map[Char, Bool] = Map([])
   let next_globals = globals.to_owned()

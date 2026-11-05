@@ -23,6 +23,18 @@ fn escape_single_quote(s : String) -> String {
 }
 
 ///|
+// Encode code points injectively: punctuation and Unicode never become shell
+// identifiers, and distinct application names cannot overwrite each other.
+fn completion_function(name : String) -> String {
+  let sb = StringBuilder()
+  sb.write_string("_cmder")
+  for c in name {
+    sb.write_string("_\{c.to_int()}")
+  }
+  sb.to_string()
+}
+
+///|
 fn escape_fish_description(s : String) -> String {
   s.replace_all(old="\\", new="\\\\").replace_all(old="'", new="\\'")
 }
@@ -142,12 +154,14 @@ fn render_bash_node(
   render_shell_scan(sb, options, commands, fn_name, "cword")
   sb.write_string("  (( pos > cword )) && return\n")
   sb.write_string(
-    "  local candidates=\"" + collect_option_words(options) + "\"\n",
+    "  local candidates='" +
+    escape_single_quote(collect_option_words(options)) +
+    "'\n",
   )
   sb.write_string(
-    "  if (( !positional_seen )); then candidates=\"" +
-    collect_command_names(commands) +
-    " " +
+    "  if (( !positional_seen )); then candidates='" +
+    escape_single_quote(collect_command_names(commands)) +
+    " '\"" +
     dollar +
     "candidates\"; fi\n",
   )
@@ -182,7 +196,7 @@ fn render_bash_node(
 /// ```
 pub fn CliApp::render_bash_completion(self : CliApp) -> String {
   let sb = StringBuilder()
-  let fn_name = "_" + self.root.name.replace_all(old="-", new="_")
+  let fn_name = completion_function(self.root.name)
   sb.write_string(fn_name + "() {\n")
   sb.write_string("  COMPREPLY=()\n")
   // Bash splits words at COMP_WORDBREAKS (notably '=' and ':'). Rejoin
@@ -226,7 +240,13 @@ pub fn CliApp::render_bash_completion(self : CliApp) -> String {
     completion_options(self.root.options, version=true),
     completion_commands(self.root.subcommands, self.root.options),
   )
-  sb.write_string("complete -F " + fn_name + " " + self.root.name + "\n")
+  sb.write_string(
+    "complete -F " +
+    fn_name +
+    " '" +
+    escape_single_quote(self.root.name) +
+    "'\n",
+  )
   sb.to_string()
 }
 
@@ -309,7 +329,7 @@ fn render_zsh_command(
 pub fn CliApp::render_zsh_completion(self : CliApp) -> String {
   let sb = StringBuilder()
   sb.write_string("#compdef " + self.root.name + "\n\n")
-  let fn_name = "_" + self.root.name.replace_all(old="-", new="_")
+  let fn_name = completion_function(self.root.name)
   sb.write_string(fn_name + "() {\n")
   sb.write_string("  local pos=2\n")
   let root_options = completion_options(self.root.options, version=true)
@@ -329,7 +349,9 @@ pub fn CliApp::render_zsh_completion(self : CliApp) -> String {
   for i, cmd in commands {
     render_zsh_command(sb, cmd, fn_name + "_c" + i.to_string())
   }
-  sb.write_string("compdef " + fn_name + " " + self.root.name + "\n")
+  sb.write_string(
+    "compdef " + fn_name + " '" + escape_single_quote(self.root.name) + "'\n",
+  )
   sb.to_string()
 }
 
@@ -500,9 +522,7 @@ fn render_fish_node(
 pub fn CliApp::render_fish_completion(self : CliApp) -> String {
   let sb = StringBuilder()
   sb.write_string("# Fish completions for " + self.root.name + "\n")
-  let context_fn = "__" +
-    self.root.name.replace_all(old="-", new="_") +
-    "_context"
+  let context_fn = completion_function(self.root.name) + "_context"
   sb.write_string("function " + context_fn + "\n")
   sb.write_string(
     (
@@ -539,7 +559,7 @@ pub fn CliApp::render_fish_completion(self : CliApp) -> String {
   )
   render_fish_node(
     sb,
-    self.root.name,
+    "'" + escape_fish_description(self.root.name) + "'",
     context_fn,
     "root",
     root_options,

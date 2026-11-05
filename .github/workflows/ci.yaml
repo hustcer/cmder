@@ -39,3 +39,6 @@ jobs:
       - name: Test CLI process boundaries
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
         run: nu scripts/check-cli.nu
+      - name: Check bilingual README examples
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
+        run: nu --no-config-file scripts/check-readme.nu

@@ -1,6 +1,7 @@
 # Capture calls to the completion widgets outside an interactive ZLE session.
 # The generated scanner and dispatcher execute in real Zsh.
-compdef() { :; }
+typeset -A registered_completions
+compdef() { completion_function=$1; registered_completions[$2]=$1; }
 _describe() { described=("${commands[@]}"); }
 _arguments() { specs=("$@"); }
 source "$CMDER_COMPLETION_FILE"
@@ -12,7 +13,7 @@ check() {
   CURRENT=${#words[@]}
   specs=()
   described=()
-  _cmder_test
+  "$completion_function"
   local actual="${(j: :)specs}"
   if [[ "$actual" != "$expected" ]]; then
     printf 'Zsh: %s: expected <%s>, got <%s>\n' "$*" "$expected" "$actual" >&2
@@ -44,7 +45,7 @@ words=(cmder-test help db '')
 CURRENT=${#words[@]}
 specs=()
 described=()
-_cmder_test
+"$completion_function"
 if [[ "${(j: :)described}" != 'inspect:' ]]; then
   print -u2 -- 'Zsh: help topics did not follow the command hierarchy'
   exit 1
@@ -58,7 +59,7 @@ SPEC
 words=(cmder-test quoting --)
 CURRENT=${#words[@]}
 specs=()
-_cmder_test
+"$completion_function"
 if [[ "${specs[2]}" != "$expected_value" ]]; then
   print -u2 -- 'Zsh: option description was not encoded for _arguments'
   exit 1
@@ -70,4 +71,20 @@ if (( ${#described} != 0 )); then
   print -u2 -- 'Zsh: positional input must suppress subcommand suggestions'
   exit 1
 fi
+source "$CMDER_NAMES_FILE"
+index=0
+for app_name in tool.exe 中文工具 foo-bar foo_bar tool+; do
+  completion_function=${registered_completions[$app_name]}
+  check "--ready${index}[] $help_specs" 发布.v2+ --
+  words=("$app_name" 发)
+  CURRENT=${#words[@]}
+  described=()
+  "$completion_function"
+  if [[ "${described[1]}" != '发布.v2+:' ]]; then
+    print -u2 -- 'Zsh: Unicode command suggestion lost'
+    exit 1
+  fi
+  ((checks += 1))
+  ((index += 1))
+done
 printf 'Zsh: %s dispatch checks passed\n' "$checks"

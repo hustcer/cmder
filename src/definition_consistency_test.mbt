@@ -125,7 +125,7 @@ test "globals cannot be redefined or shadowed by descendants" {
 test "construction rejects shell metacharacters and special option spellings" {
   for
     name in [
-      "$(id)", "name;echo", "quote'", "back\\slash", "trailing-", "dot.name",
+      "$(id)", "name;echo", "quote'", "back\\slash", "line\nbreak", "a:b",
     ] {
     expect_definition_error(() => @cmder.cli(name~, run=_ => ()))
     expect_definition_error(() => {
@@ -138,6 +138,28 @@ test "construction rejects shell metacharacters and special option spellings" {
   for short in ['$', '\'', '\\', '-', '[', ':', '\n'] {
     expect_definition_error(() => {
       @cmder.cli(name="app", options=[@cmder.bool("quiet", short~)])
+    })
+  }
+}
+
+///|
+test "application and command spellings allow filenames and Unicode" {
+  for name in ["tool.exe", "中文工具", "tool+", "trailing-"] {
+    let app = @cmder.cli(name~, commands=[
+      @cmder.command(name="发布.v2+", run=_ => ()),
+    ])
+    app.run(argv=["发布.v2+"])
+    assert_true(app.render_help().contains(name))
+    assert_true(
+      app.render_help(command_path=["发布.v2+"]).contains("发布.v2+"),
+    )
+  }
+  for name in ["two words", "a\tname", "a\u0000b", "a\u200Bb", "-tool", ""] {
+    expect_definition_error(() => @cmder.cli(name~))
+  }
+  for name in ["dot.name", "中文参数", "name+"] {
+    expect_definition_error(() => {
+      @cmder.cli(name="app", options=[@cmder.string(name)])
     })
   }
 }

@@ -32,6 +32,8 @@ pkgtype(kind: "executable")
 
 A single-command tool does not need an artificial subcommand. Put this in `main.mbt`:
 
+<!-- cmder-example {"id":"quick-start","kind":"program","args":["-n","Ada"],"stdout":"Hello, Ada!\n","fail_args":["-n","Ada","--count","bad"],"error":"invalid integer for 'count': 'bad'"} -->
+
 ```moonbit
 ///|
 fn main raise {
@@ -74,9 +76,11 @@ HELLO, BOB!
 
 `cli` validates the entire definition tree during construction and raises `CliError::InvalidDefinition` for invalid names, duplicate arguments/short flags/subcommands, positional ordering errors, and conflicts with inherited global arguments. This is why the example uses `fn main raise`.
 
-Command and argument names use ASCII letters, digits, underscores and hyphens, with no leading or trailing hyphen. Short options use one ASCII letter, digit or underscore. This keeps parser spellings and generated shell code consistent; descriptions remain unrestricted text.
+Application and subcommand names are single words using ASCII letters, digits, underscores, hyphens, dots, plus signs or printable non-ASCII characters; whitespace, control characters and leading hyphens are rejected. Names such as `tool.exe`, `中文工具` and `release.v2+` are valid. Option and positional identifiers use ASCII letters, digits, underscores and hyphens, without a leading hyphen. Short options use one ASCII letter, digit or underscore. Completion function identifiers are encoded independently of command spellings; descriptions remain unrestricted text.
 
 ## Options and Positional Arguments
+
+<!-- cmder-example {"id":"options","kind":"pure","binds":["options"]} -->
 
 ```moonbit
 let options = [
@@ -92,6 +96,8 @@ let options = [
 All integer options are checked during `parse` and `run`: decimal Int32 syntax with an optional leading minus, and range -2147483648 through 2147483647. Leading zeroes have no length cap. Negative values support `--delta -1`, `-d -1` and `--delta=-1`. Raw spellings remain available through `get_string`. Positive-only values, product ranges and relationships remain application rules.
 
 Root and nested commands accept `positionals`. Required positionals must precede optional ones. Each positional except the last accepts at most one value; the final positional accepts all remaining values:
+
+<!-- cmder-example {"id":"positionals","kind":"raising","binds":["app"]} -->
 
 ```moonbit
 let app = @cmder.cli(
@@ -112,6 +118,8 @@ let app = @cmder.cli(
 A command with subcommands may have optional positionals, but cannot have required positionals: argparse would make its subcommands unreachable, so construction rejects that combination. After positional input starts, subsequent words belong to that command's positional execution and cannot select a subcommand.
 
 ## Subcommands and Scope
+
+<!-- cmder-example {"id":"subcommands","kind":"raising","binds":["app"]} -->
 
 ```moonbit
 let app = @cmder.cli(
@@ -139,6 +147,8 @@ Global options are accepted at their declaring command and anywhere below it. Bo
 
 Other arguments are local. A callback sees the selected command's locals and its inherited globals, not ancestor-local values. Local names may repeat in separate scopes without merging: a root `string("count")` never supplies a child `int("count")`. Mark a parameter global when descendants need to read it.
 
+Local `required=true` options are required only when their owning command is selected. A root-local required `token` does not block `myapp db migrate`, and is not visible to that callback. Explicit ancestor-local input is still checked for valid type. A required global is required throughout its declaring subtree and stays readable in descendant callbacks. Help names required locals and explains their scope when subcommands exist; generated descendant examples include required ancestor globals, never ancestor locals. Missing selected-local required options return `Failed(CliError::MissingOption(name))`.
+
 Only the selected callback runs. Selecting a group with a callback executes that callback; selecting a deeper command executes only the deeper callback. Without a callback, dispatch raises `MissingCommand` for the root, `MissingSubcommand` for a group, or `MissingHandler` for a leaf.
 
 ## Reading Arguments and Errors
@@ -162,6 +172,8 @@ Only the selected callback runs. Selecting a group with a callback executes that
 `parse` requires explicit argv without the executable name. It performs no process I/O, reads no process environment, and invokes no callbacks. It returns `Parsed`, `Help`, `Version` or `Failed`. Help/version and structural parser errors keep argparse's precedence over integer checks; only selected scopes undergo input type checks.
 
 Place this flow in a raising host function; the application entry point handles propagated errors as in Quick Start.
+
+<!-- cmder-example {"id":"host-dispatch","kind":"raising","stdout":"3\n"} -->
 
 ```moonbit
 let app = @cmder.cli(name="app", options=[@cmder.int("count", default=1)], run=ctx => {
@@ -200,6 +212,8 @@ Definitions copy caller-owned collections into read-only arrays. Parsed results 
 
 ## Exporting Definitions and Completion
 
+<!-- cmder-example {"id":"exports","kind":"raising","context":"subcommands","binds":["schema_text","schema_json","help","bash_script","zsh_script","fish_script"]} -->
+
 ```moonbit
 let schema_text = app.render_schema()
 let schema_json = app.render_schema_json()
@@ -229,7 +243,7 @@ source ./_myapp
 source ./myapp.fish
 ```
 
-`build_command(command)` is an explicit argparse interop escape hatch: it validates definitions and returns an `argparse.Command`, without cmder's integer input checks or callback execution. Normal consumers use `CliApp::parse`.
+`build_command(command)` is an explicit argparse interop escape hatch: it validates definitions and returns an `argparse.Command` with argparse's ancestor-required semantics, without cmder's selected-local required checks, integer input checks or callback execution. Normal consumers use `CliApp::parse`.
 
 ## Migration from 0.3
 
@@ -261,9 +275,10 @@ moon run src/examples/cli --target native -- db migrate up --dry-run
 moon run src/examples/cli --target native -- --schema
 nu scripts/check-cli.nu
 nu scripts/check-completions.nu
+nu scripts/check-readme.nu
 ```
 
-The process suite covers native/JS/wasm-gc. Shell regressions require Nushell 0.116+, Bash, Fish and Zsh; they execute generated scripts in clean shells, with Zsh widget calls captured outside an interactive ZLE session. CI runs shell checks on native. See [the public interface](src/pkg.generated.mbti) and [the redesign contract](docs/superpowers/specs/2026-11-05-cmder-interface.md).
+The process suite covers native/JS/wasm-gc. Shell regressions require Nushell 0.116+, Bash, Fish and Zsh; they execute generated scripts in clean shells, with Zsh widget calls captured outside an interactive ZLE session. CI runs shell checks on native. The README check compares both languages' code blocks and example metadata, compiles the actual MoonBit snippets against this worktree with warnings denied, and executes them on all three backends, including the Quick Start error exit. HTML `cmder-example` markers name each snippet, its bindings and any context snippet; keep those markers synchronized when editing examples. CI runs this check as well. See [the public interface](src/pkg.generated.mbti) and [the redesign contract](docs/superpowers/specs/2026-11-05-cmder-interface.md).
 
 ## Acknowledgments and License
 

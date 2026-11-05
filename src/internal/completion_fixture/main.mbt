@@ -66,6 +66,8 @@ fn main raise {
     "bash" => println(app.render_bash_completion())
     "zsh" => println(app.render_zsh_completion())
     "fish" => println(app.render_fish_completion())
+    "bash-names" | "zsh-names" | "fish-names" =>
+      println(name_completions(args[args.length() - 1]))
     "parse-help" => {
       guard app.parse(argv=["files", "--help"]) is Help(text) else { panic() }
       println(text)

@@ -17,8 +17,11 @@ def main [] {
       let generated = (checked moon [run src/internal/completion_fixture --target native -- $shell])
       let completion_file = ($scratch | path join $'completion.($shell)')
       $generated | save $completion_file
+      let names = (checked moon [run src/internal/completion_fixture --target native -- $'($shell)-names'])
+      let names_file = ($scratch | path join $'names.($shell)')
+      $names | save $names_file
       let test_file = ($repo | path join scripts shell-tests $'completion.($shell)')
-      with-env {CMDER_COMPLETION_FILE: $completion_file} {
+      with-env {CMDER_COMPLETION_FILE: $completion_file, CMDER_NAMES_FILE: $names_file} {
         let args = match $shell {
           bash => [--noprofile --norc $test_file]
           fish => [--no-config $test_file]

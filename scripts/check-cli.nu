@@ -29,7 +29,7 @@ def check-example [target: string]: nothing -> nothing {
     {args: [greet --name Ada --count bad], expected: "invalid integer for 'count': 'bad'"}
     {args: [greet --name Ada --count '2147483648'], expected: "integer out of Int32 range for 'count': '2147483648'"}
     {args: [db migrate up --steps bad], expected: "invalid integer for 'steps': 'bad'"}
-    {args: [greet], expected: '--name'}
+    {args: [greet], expected: 'missing required option: name'}
     {args: [db], expected: "missing subcommand for 'db'"}
   ] {
     let result = (^moon run src/examples/cli --target $target -- ...$case.args | complete)

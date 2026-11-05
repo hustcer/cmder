@@ -62,4 +62,11 @@ if test "$value_description" != "$expected"
     exit 1
 end
 set -g checks (math $checks + 1)
+source "$CMDER_NAMES_FILE"; or exit 1
+set -l index 0
+for app_name in tool.exe 中文工具 foo-bar foo_bar tool+
+    check --ready$index "$app_name 发布.v2+ --rea"
+    check 发布.v2+ "$app_name 发"
+    set index (math $index + 1)
+end
 printf 'Fish: %s behavior checks passed\n' $checks

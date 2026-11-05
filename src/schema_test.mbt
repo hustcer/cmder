@@ -129,14 +129,20 @@ test "generated example includes required positionals" {
 }
 
 ///|
-test "generated nested example includes required ancestor arguments" {
+test "generated nested example includes only global required ancestor options" {
   let app = @cmder.cli(
     name="app",
-    options=[@cmder.string("profile", required=true)],
+    options=[
+      @cmder.string("profile", required=true, global=true),
+      @cmder.string("token", required=true),
+    ],
     commands=[
       @cmder.command(
         name="db",
-        options=[@cmder.string("region", required=true)],
+        options=[
+          @cmder.string("region", required=true, global=true),
+          @cmder.string("local", required=true),
+        ],
         subcommands=[
           @cmder.command(name="up", run=_ => (), positionals=[
             @cmder.positional("version", required=true),
@@ -150,6 +156,15 @@ test "generated nested example includes required ancestor arguments" {
     .render_schema()
     .contains("app --profile <profile> db --region <region> up <version>"),
     content="true",
+  )
+  assert_false(app.render_schema().contains("up --token"))
+  assert_true(
+    app.render_schema().contains("app --profile <profile> --token <token>"),
+  )
+  assert_true(
+    app
+    .render_schema()
+    .contains("app --profile <profile> db --region <region> --local <local>"),
   )
   app.run(argv=["--profile", "p", "db", "--region", "r", "up", "1"])
 }

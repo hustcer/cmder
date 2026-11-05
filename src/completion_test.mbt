@@ -10,13 +10,13 @@ test "bash completion contains commands and options" {
     ]),
   ])
   let bash = app.render_bash_completion()
-  inspect(bash.contains("_myapp"), content="true")
+  inspect(bash.contains("_cmder"), content="true")
   inspect(bash.contains("greet"), content="true")
   inspect(bash.contains("db"), content="true")
   inspect(bash.contains("--name"), content="true")
   inspect(bash.contains("--verbose"), content="true")
   inspect(bash.contains("migrate"), content="true")
-  inspect(bash.contains("complete -F _myapp myapp"), content="true")
+  inspect(bash.contains(" 'myapp'\n"), content="true")
 }
 
 ///|
@@ -46,7 +46,7 @@ test "fish completion contains commands and options" {
     ]),
   ])
   let fish = app.render_fish_completion()
-  inspect(fish.contains("complete -c myapp"), content="true")
+  inspect(fish.contains("complete -c 'myapp'"), content="true")
   inspect(fish.contains("greet"), content="true")
   inspect(fish.contains("-l name"), content="true")
   inspect(fish.contains("-s n"), content="true")
@@ -67,28 +67,12 @@ test "nested completion dispatches to the selected command" {
   ])
   let bash = app.render_bash_completion()
   inspect(bash.contains("while (( pos < cword )); do"), content="true")
-  inspect(
-    bash.contains(
-      "if (( !positional_seen )); then _myapp_root_c0; return; fi ;;",
-    ),
-    content="true",
-  )
+  inspect(bash.contains("_root_c0; return; fi ;;"), content="true")
   let zsh = app.render_zsh_completion()
   inspect(zsh.contains("while (( pos < CURRENT )); do"), content="true")
-  inspect(
-    zsh.contains("if (( !positional_seen )); then _myapp_c0; return; fi ;;"),
-    content="true",
-  )
-  inspect(
-    zsh.contains("if (( !positional_seen )); then _myapp_c0_c0; return; fi ;;"),
-    content="true",
-  )
-  inspect(
-    zsh.contains(
-      "if (( !positional_seen )); then _myapp_c0_c0_c0; return; fi ;;",
-    ),
-    content="true",
-  )
+  inspect(zsh.contains("_c0; return; fi ;;"), content="true")
+  inspect(zsh.contains("_c0_c0; return; fi ;;"), content="true")
+  inspect(zsh.contains("_c0_c0_c0; return; fi ;;"), content="true")
   inspect(zsh.contains("'--target[]:value:'"), content="true")
 }
 
