@@ -1,17 +1,7 @@
 ///|
-/// Defines a local positional argument. The final positional accepts multiple
-/// values; earlier positionals accept at most one. Declare required ones first.
-pub fn positional(
-  name : String,
-  description~ : String = "",
-  required~ : Bool = false,
-) -> PositionalDef {
-  { name, description, required, }
-}
-
-///|
 /// Defines an immutable command. Input collections are copied. Callback errors
 /// propagate unchanged to the application host.
+/// required_scope_notice replaces the default group scope note; "" disables it.
 ///
 /// ```mbt check
 /// test {
@@ -27,6 +17,7 @@ pub fn command(
   examples~ : ArrayView[String] = [],
   subcommands~ : ArrayView[CommandDef] = [],
   run? : (Context) -> Unit raise,
+  required_scope_notice? : String,
 ) -> CommandDef {
   {
     name,
@@ -36,6 +27,7 @@ pub fn command(
     examples: ReadOnlyArray::from_array(examples),
     subcommands: ReadOnlyArray::from_array(subcommands),
     run,
+    required_scope_notice,
   }
 }
 
@@ -43,6 +35,7 @@ pub fn command(
 /// Builds and validates an immutable application. Root commands support the
 /// same options, positionals, examples and raising callbacks as subcommands.
 /// Only explicitly global options are shared with descendants.
+/// required_scope_notice replaces the default group scope note; "" disables it.
 ///
 /// ```mbt check
 /// test {
@@ -63,6 +56,7 @@ pub fn cli(
   examples~ : ArrayView[String] = [],
   commands~ : ArrayView[CommandDef] = [],
   run? : (Context) -> Unit raise,
+  required_scope_notice? : String,
 ) -> CliApp raise CliError {
   let root = command(
     name~,
@@ -72,6 +66,7 @@ pub fn cli(
     examples~,
     subcommands=commands,
     run?,
+    required_scope_notice?,
   )
   validate_definition(root, [], [])
   { root, version, }
@@ -143,6 +138,15 @@ fn process_argv() -> ArrayView[String] {
 /// Parses and dispatches, propagating parser and original callback errors.
 /// Omit argv to use process arguments. Help and version print and exit with
 /// status zero. Embedded hosts can use parse and Invocation::dispatch instead.
+///
+/// ```mbt check
+/// test {
+///   let called = Ref(false)
+///   let app = @cmder.cli(name="demo", run=_ => called.val = true)
+///   app.run(argv=[])
+///   assert_true(called.val)
+/// }
+/// ```
 pub fn CliApp::run(self : CliApp, argv? : ArrayView[String]) -> Unit raise {
   let args = argv.unwrap_or_else(process_argv)
   match self.parse(argv=args) {
@@ -152,5 +156,24 @@ pub fn CliApp::run(self : CliApp, argv? : ArrayView[String]) -> Unit raise {
       @env.exit(0)
     }
     Failed(error) => raise error
+  }
+}
+
+///|
+/// Runs a standalone CLI, reporting parser or callback errors and exiting one.
+/// Help/version still exit zero. Embedded hosts should use parse or run.
+///
+/// ```mbt check
+/// test {
+///   let app = @cmder.cli(name="demo", run=_ => ())
+///   app.run_or_exit(argv=[])
+/// }
+/// ```
+pub fn CliApp::run_or_exit(self : CliApp, argv? : ArrayView[String]) -> Unit {
+  self.run(argv?) catch {
+    error => {
+      eprintln(error)
+      @env.exit(1)
+    }
   }
 }

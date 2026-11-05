@@ -31,12 +31,11 @@ fork 以来，cmder 的包名和 API 已发生变化。迁移时需要更新导�
 moon add hustcer/cmder
 ```
 
-在使用它的包的 `moon.pkg` 中添加导入。以下可执行示例还使用 `core/env` 控制退出状态：
+在使用它的包的 `moon.pkg` 中添加导入：
 
 ```text
 import {
   "hustcer/cmder",
-  "moonbitlang/core/env",
 }
 pkgtype(kind: "executable")
 ```
@@ -68,12 +67,7 @@ fn main raise {
       }
     },
   )
-  app.run() catch {
-    error => {
-      eprintln(error)
-      @env.exit(1)
-    }
-  }
+  app.run_or_exit()
 }
 ```
 
@@ -85,7 +79,7 @@ HELLO, BOB!
 HELLO, BOB!
 ```
 
-`--help` 和 `--version` 自动生成。应用回调的类型为 `(Context) -> Unit raise`：参数读取错误及业务错误通过 dispatch 和 run 原样传播，由应用入口统一决定错误输出和退出状态。`eprintln` 在 native 和 JS 上写入 stderr；当前 wasm-gc 运行时会退回 stdout。
+`--help` 和 `--version` 自动生成。应用回调的类型为 `(Context) -> Unit raise`：参数读取错误及业务错误通过 dispatch 和 run 原样传播。`run_or_exit` 输出错误并以状态码 1 退出，帮助/版本以状态码 0 退出；需要自定义输出的宿主使用 `run` 或 `parse`。错误在 native 和 JS 上写入 stderr；当前 wasm-gc 运行时会退回 stdout。
 
 `cli` 在构建时验证完整定义树。名称非法、参数/短选项/子命令重名、位置参数顺序错误，以及与继承 global 参数冲突，都会抛出 `CliError::InvalidDefinition`。因此示例使用 `fn main raise`。
 
@@ -106,9 +100,9 @@ let options = [
 
 `short` 和 `default` 直接接受对应的值。字符串/整数选项设置默认值后，即使同时指定 `required=true`，也允许省略。Boolean 开关始终可省略，初始值为 false。辅助函数创建归一化、只读的 `OptionDef`，不再支持直接构造记录。`OptionKind` 的 `StringOpt` 保存 `String?` 默认值，`IntOpt` 保存 `Int32?` 默认值，`BoolOpt` 不携带值默认值。未设置的短选项以 `None` 表示。
 
-`parse` 和 `run` 始终校验整数选项：允许带负号的十进制 Int32，范围为 -2147483648 到 2147483647。前导零没有位数限制。负数支持 `--delta -1`、`-d -1` 和 `--delta=-1`。`get_string` 仍能读取原始写法。正数、业务范围和参数关系由应用自行校验。
+`parse` 和 `run` 始终校验整数选项：允许带负号的十进制 Int32，范围为 -2147483648 到 2147483647。前导零没有位数限制。负数支持 `--delta -1`、`-d -1` 和 `--delta=-1`。整数选项不会吞掉后续开关或 `--`，`--count --help` 会显示帮助。`get_string` 仍能读取原始写法。正数、业务范围和参数关系由应用自行校验。
 
-根命令和子命令都支持 `positionals`。必填位置参数必须位于可选参数之前；除最后一个之外，每个位置参数最多接受一个值，最后一个接受剩余所有值：
+根命令和子命令都支持 `positionals`。必填位置参数必须位于可选参数之前；除最后一个之外，每个位置参数最多接受一个值，最后一个默认接受剩余所有值。设置 `multiple=false` 可以将该参数限制为单值，包括最后一个；多余输入会导致解析失败：
 
 <!-- cmder-example {"id":"positionals","kind":"raising","binds":["app"]} -->
 
@@ -128,7 +122,7 @@ let app = @cmder.cli(
 
 `copy a.txt b.txt c.txt` 得到 `source="a.txt"` 和 `destinations=["b.txt", "c.txt"]`。
 
-带子命令的命令可以包含可选位置参数，但不能包含必填位置参数：argparse 会让该组合的子命令不可达，因此构建时会拒绝。一旦开始读取位置参数，后续单词属于该命令的位置参数执行流程，不能再选择子命令。
+带子命令的命令可以包含可选位置参数，但不能包含必填位置参数：argparse 会让该组合的子命令不可达，因此构建时会拒绝。开始读取位置参数后，再遇到子命令名会导致解析错误；在该名称前加入 `--` 可将其作为普通值，例如 `app x.txt -- go` 将两个单词都作为位置参数。
 
 ## 子命令与作用域
 
@@ -158,9 +152,9 @@ let app = @cmder.cli(
 
 Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db migrate` 和 `myapp db migrate -v` 都可使用；`--region` 从进入 `db` 后开始可用。每个 global 参数只有一份定义，后代不能用相同名称或短选项重新定义或遮蔽它。显式输入优先于该参数的默认值。
 
-其他参数保持局部作用域。回调只能读取选中命令的局部参数和继承的 global 参数，不能读取祖先局部值。不同作用域的局部参数可以同名，但不会合并：根级 `string("count")` 不会为子级 `int("count")` 提供值。需要后代读取的选项应标记为 global。
+其他参数保持局部作用域。回调只能读取选中命令的局部参数和继承的 global 参数。显式提供祖先局部选项后再选择子命令，将返回 `UnexpectedLocalArgument`，不再静默丢弃其值。祖先局部默认值不会泄漏。不同作用域的局部参数可以同名，但不会合并：根级 `string("count")` 不会为子级 `int("count")` 提供值。需要后代读取的选项应标记为 global。
 
-局部 `required=true` 选项只在其所属命令被选中时必填。根级局部必填 `token` 不会阻止 `myapp db migrate` 执行，也不会出现在该回调的参数中。显式提供的祖先局部输入仍须通过类型校验。必填 global 在声明层级及其整个后代子树中都必填，并始终可由后代回调读取。存在子命令时，帮助会列出局部必填选项并解释其作用域；后代自动示例包含必填祖先 global，不包含祖先局部参数。缺少选中命令的局部必填选项时返回 `Failed(CliError::MissingOption(name))`。
+局部 `required=true` 选项只在其所属命令被选中时必填。根级局部必填 `token` 不会阻止 `myapp db migrate` 执行。必填 global 在声明层级及其整个后代子树中都必填，并始终可由后代回调读取。缺少局部或 global 必填选项统一返回 `Failed(CliError::MissingOption(name))`，缺少必填位置参数返回 `MissingPositional(name)`。帮助及错误 Usage 保留必填标记。存在子命令时，帮助会列出局部必填选项并解释其作用域；可在 `cli` 或 `command` 上设置 `required_scope_notice="..."` 替换为本地化说明，空字符串可关闭说明。示例和说明只出现在命令自己的帮助中，不会混入父命令列表。后代自动示例包含必填祖先 global，即使叶子没有自己的参数。
 
 只执行选中命令的回调。选择带回调的分组命令会执行该回调；选择更深的子命令时，只执行更深的回调。没有回调时，根命令调度抛出 `MissingCommand`，分组抛出 `MissingSubcommand`，叶子命令抛出 `MissingHandler`。
 
@@ -170,13 +164,16 @@ Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db 
 | --------------------------- | ----------------------- | ------------------------------------- |
 | `get_bool(name)`            | `Bool`                  | 缺失时返回 false                      |
 | `get_string(name)`          | `String?`               | 首个原始值，保留整数的原始写法        |
-| `get_string_required(name)` | `String raise CliError` | 缺失时抛出 `MissingOption`            |
+| `get_string_required(name)` | `String raise CliError` | 缺失时抛出 `MissingOption` / `MissingPositional` |
 | `get_int(name)`             | `Int32? raise CliError` | 仅缺失返回 None，格式或范围错误会抛出 |
 | `get_int_required(name)`    | `Int32 raise CliError`  | 缺失、格式错误和溢出都会抛出          |
 | `get_strings(name)`         | `Array[String]`         | 所有值的独立副本，缺失时返回空数组    |
+| `get_bool_checked(name)`    | `Bool raise CliError`   | 检查已声明的 Boolean 开关，缺失为 false |
+| `get_string_checked(name)`  | `String? raise CliError`| 检查已声明的文本参数，缺失为 None     |
+| `get_strings_checked(name)` | `Array[String] raise CliError` | 检查声明并返回所有值的独立副本 |
 | `source_of(name)`           | `ValueSource?`          | 当前有效值的来源，缺失时返回 None     |
 
-`get_int` 和 `get_int_required` 使用相同转换规则。非法格式抛出 `InvalidInteger(name, raw)`，溢出抛出 `IntegerOutOfRange(name, raw)`。把字符串参数作为整数读取时，也遵循这些检查。Getter 后提供的默认值只作用于缺失输入，不会掩盖非法输入。
+会抛错的 getter 检查可见参数名：拼写错误或超出作用域的名称抛出 `UnknownArgument`，Boolean 与文本类型不兼容时抛出 `ArgumentTypeMismatch`。三个不抛错的 getter 保留宽松的名称缺失行为，以兼容现有调用。文本 getter 可以读取字符串、整数原始写法及位置参数。`get_int` 和 `get_int_required` 也允许转换字符串及位置参数，格式非法抛出 `InvalidInteger(name, raw)`，溢出抛出 `IntegerOutOfRange(name, raw)`。只有已声明的参数缺失时才返回 None；必填 getter 区分 `MissingOption` 与 `MissingPositional`。
 
 `CliError::message()` 和 `to_string()` 返回可直接展示的诊断。`ParseError(message)` 保留 argparse 的诊断文本和帮助，不应通过解析该文本判断机器可读的错误类别。业务回调错误保留原始错误类型，可由宿主集中处理。
 
@@ -184,7 +181,7 @@ Global 选项可以出现在声明层级及其任意后代层级。`myapp -v db 
 
 `parse` 要求显式 argv，数组不包含可执行程序名。它不执行进程 I/O、不读取进程环境，也不执行回调，返回 `Parsed`、`Help`、`Version` 或 `Failed`。帮助、版本及结构性解析错误保持 argparse 相对于整数检查的原有优先级；只检查选中作用域的输入类型。
 
-将以下流程放入允许传播错误的宿主函数，再由应用入口像“快速开始”一样统一处理传播的错误。
+将以下流程放入允许传播错误的宿主函数。像下面这样由宿主控制进程退出时，需要导入 `moonbitlang/core/env`；独立工具可以直接使用 `run_or_exit` 的默认错误处理。
 
 <!-- cmder-example {"id":"host-dispatch","kind":"raising","stdout":"3\n"} -->
 
@@ -221,7 +218,7 @@ match app.parse(argv=["--count", "2"]) {
 
 `call.source_of(name)` 和 `call.context.source_of(name)` 返回 `Argv`、`Default`、`Override` 或 None。`Env` 为底层来源模型保留；当前定义没有配置环境变量绑定。未改变的值保留原来源；被覆盖的值使用 `Override`，即使与 argv 值相等。清空可选位置参数会使其缺失，此时没有有效来源。`was_provided(name)` 仅在当前有效来源为 `Argv` 时返回 true。
 
-`app.run()` 是便利入口：读取进程 argv，解析并调度，在帮助/版本请求时打印并以状态码 0 退出。`app.run(argv=[...])` 使用显式参数。解析及回调错误向调用方传播。嵌入式宿主使用 `parse` 和 `call.dispatch()` 控制输出及退出状态。
+`app.run()` 读取进程 argv，解析并调度，在帮助/版本请求时打印并以状态码 0 退出。`app.run(argv=[...])` 使用显式参数。解析及回调错误向调用方传播。`app.run_or_exit()` 额外负责输出失败并以状态码 1 退出。嵌入式宿主使用 `parse` 和 `call.dispatch()` 控制输出及退出状态。版本默认字符串为 `0.0.0`，正式工具应显式指定 `version`。
 
 ## 导出定义与补全
 
@@ -266,15 +263,15 @@ source ./myapp.fish
 | `run=Some(fn(ctx) { ... })`                    | `run=(ctx) => { ... }`，允许向外传播错误                              |
 | `app.run(argv=Some(args))`                     | `app.run(argv=args)`                                                  |
 | `get_int_checked(name)`                        | `get_int(name)`，非法输入现在会抛错                                   |
-| `validate_types=true`                          | 删除该参数，始终检查声明的整数                                        |
 | 隐式继承祖先参数                               | 将共享选项标记为 `global=true`                                        |
-| `app.dispatch(call)`                           | `call.dispatch()`                                                     |
 | 直接修改 Context/路径                          | `call.with_overrides(...)`                                            |
 | `Context.subcommand` / `get_subcommand()`      | `Invocation.command_path`                                             |
 | 公开定义记录字面量                             | 使用 `cli`、`command`、`string`、`int`、`bool`、`positional` 辅助函数 |
 | `app.name`、`app.commands`、`app.root_options` | `app.root.name`、`app.root.subcommands`、`app.root.options`           |
 
 `OptionType` 被携带有类型默认值的 `OptionKind` 替代。非法定义在构建阶段报错，不再等待第一次解析 argv。这些是有意的破坏性变更。
+
+从 0.5.1 升级到 0.6：显式祖先局部选项现在报错，不再静默消失；需要共享时设置 `global=true`，或将选项传给其所属命令。缺少必填 global 选项现在返回 `MissingOption`，缺少必填位置参数返回 `MissingPositional`，二者在 0.5.1 中均为 `ParseError`。会抛错的 getter 现在拒绝未知名称及 Boolean/文本类型不匹配。现有不抛错的 getter 和末位位置参数的默认多值行为继续保留；`multiple=false`、严格 getter 和 `run_or_exit` 均为新增接口。0.3 之后未发布的开发接口 `validate_types` 和 `app.dispatch(call)` 已在 0.5 移除，它们不属于 v0.3.0。
 
 ## 本地开发
 

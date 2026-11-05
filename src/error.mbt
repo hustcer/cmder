@@ -6,12 +6,15 @@ pub(all) suberror CliError {
   ParseError(String)
   InvalidDefinition(String)
   UnknownArgument(String)
+  ArgumentTypeMismatch(name~ : String, expected~ : String)
+  UnexpectedLocalArgument(command~ : String, name~ : String)
   InvalidOverride(String, String)
   MissingCommand
   UnknownCommand(Array[String])
   MissingSubcommand(String, Array[String])
   MissingHandler(String)
   MissingOption(String)
+  MissingPositional(String)
   InvalidInteger(String, String)
   IntegerOutOfRange(String, String)
 }
@@ -36,6 +39,10 @@ pub fn CliError::message(self : CliError) -> String {
     ParseError(message) => message
     InvalidDefinition(message) => "invalid CLI definition: \{message}"
     UnknownArgument(name) => "unknown argument: \{name}"
+    ArgumentTypeMismatch(name~, expected~) =>
+      "argument '\{name}' cannot be read as \{expected}"
+    UnexpectedLocalArgument(command~, name~) =>
+      "local option '--\{name}' belongs to '\{command}' and cannot be used with a subcommand; declare it global=true to share it"
     InvalidOverride(name, reason) => "invalid override for '\{name}': \{reason}"
     MissingCommand => "no command specified. Use --help for usage."
     UnknownCommand(path) => "unknown command: \{path.join(" ")}"
@@ -43,6 +50,7 @@ pub fn CliError::message(self : CliError) -> String {
       "missing subcommand for '\{command}'. Available: \{available.join(", ")}"
     MissingHandler(command) => "no callback defined for command '\{command}'"
     MissingOption(name) => "missing required option: \{name}"
+    MissingPositional(name) => "missing required positional argument: \{name}"
     InvalidInteger(name, value) => "invalid integer for '\{name}': '\{value}'"
     IntegerOutOfRange(name, value) =>
       "integer out of Int32 range for '\{name}': '\{value}'"

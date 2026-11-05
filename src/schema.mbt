@@ -32,7 +32,7 @@ fn option_def_to_json(opt : OptionDef) -> Json {
 ///|
 fn positional_def_to_json(
   pos : PositionalDef,
-  last : Bool,
+  multiple : Bool,
   index : Int32,
 ) -> Json {
   Json::object({
@@ -40,7 +40,7 @@ fn positional_def_to_json(
     "required": ToJson::to_json(pos.required),
     "index": ToJson::to_json(index),
     "min_args": ToJson::to_json(if pos.required { 1 } else { 0 }),
-    "max_args": if last {
+    "max_args": if multiple {
       Json::null()
     } else {
       ToJson::to_json(1)
@@ -85,7 +85,7 @@ fn command_def_to_json(cmd : CommandDef, path : String) -> Json {
     for i, pos in cmd.positionals {
       positionals[pos.name] = positional_def_to_json(
         pos,
-        i == cmd.positionals.length() - 1,
+        positional_is_multiple(pos, i, cmd.positionals.length()),
         i,
       )
     }
@@ -93,7 +93,7 @@ fn command_def_to_json(cmd : CommandDef, path : String) -> Json {
   }
   if !cmd.examples.is_empty() {
     m["examples"] = ToJson::to_json(cmd.examples)
-  } else if !cmd.options.is_empty() || !cmd.positionals.is_empty() {
+  } else {
     m["examples"] = ToJson::to_json([generate_example(path, cmd)])
   }
   if !cmd.subcommands.is_empty() {

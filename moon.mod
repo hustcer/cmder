@@ -1,6 +1,6 @@
 name = "hustcer/cmder"
 
-version = "0.5.1"
+version = "0.6.0"
 
 readme = "README.md"
 

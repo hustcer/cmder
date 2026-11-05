@@ -83,6 +83,10 @@ fn main raise {
       println(error.message())
       println("returned to host")
     }
+    "exit-reject" => {
+      app.run_or_exit(argv=["reject"])
+      println("unexpected return from run_or_exit")
+    }
     _ => {
       app.run() catch {
         err => {

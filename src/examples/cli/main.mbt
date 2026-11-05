@@ -24,8 +24,7 @@ fn main raise {
         run=ctx => {
           let name = ctx.get_string_required("name")
           let loud = ctx.get_bool("loud")
-          let count = ctx.get_int("count")
-          let count = count.unwrap_or(1)
+          let count = ctx.get_int_required("count")
           for _ in 0..<count {
             let msg = "Hello, \{name}!"
             if loud {
@@ -78,8 +77,7 @@ fn main raise {
               ),
             ],
             run=ctx => {
-              let steps = ctx.get_int("steps")
-              let steps = steps.unwrap_or(1)
+              let steps = ctx.get_int_required("steps")
               println("Rolling back \{steps} migration(s)...")
               println("Done.")
             },
@@ -97,7 +95,7 @@ fn main raise {
             ),
           ],
           run=ctx => {
-            let file = ctx.get_string("file").unwrap_or("seeds/default.sql")
+            let file = ctx.get_string_required("file")
             println("Seeding from: \{file}")
           },
         ),
@@ -110,10 +108,5 @@ fn main raise {
     println(app.render_schema())
     return
   }
-  app.run() catch {
-    err => {
-      eprintln(err)
-      @env.exit(1)
-    }
-  }
+  app.run_or_exit()
 }

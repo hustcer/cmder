@@ -122,9 +122,7 @@ test "effective sources belong to visible locals and globals" {
     ],
   )
   let call = expect_invocation(
-    app.parse(argv=[
-      "--mode", "root", "--region", "west", "--verbose", "root", "go", "--verbose",
-    ]),
+    app.parse(argv=["--region", "west", "go", "--verbose"]),
   )
   assert_true(call.context.get_string("mode") == Some("child"))
   assert_true(call.source_of("mode") == Some(@cmder.ValueSource::Default))

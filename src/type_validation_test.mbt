@@ -6,7 +6,7 @@ test "parse always validates integer syntax and distinguishes overflow" {
   ])
   for
     value in [
-      "", "abc", "-", "+1", "1.5", " 1", "1 ", "1e2", "999999999999999999x", "--quiet",
+      "", "abc", "-", "+1", "1.5", " 1", "1 ", "1e2", "999999999999999999x",
     ] {
     guard app.parse(argv=["--count", value])
       is Failed(@cmder.CliError::InvalidInteger("count", raw)) else {
@@ -59,16 +59,20 @@ test "ancestor locals do not leak into or get reinterpreted by child commands" {
   let app = @cmder.cli(name="app", options=[@cmder.string("value")], commands=[
     @cmder.command(name="go", options=[@cmder.int("value")]),
   ])
-  let absent = expect_invocation(app.parse(argv=["--value", "text", "go"]))
+  assert_true(
+    app.parse(argv=["--value", "text", "go"])
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="value")
+    ),
+  )
+  let absent = expect_invocation(app.parse(argv=["go"]))
   assert_true(absent.context.get_string("value") is None)
   assert_true(absent.context.get_int("value") is None)
   assert_true(absent.source_of("value") is None)
-  let explicit = expect_invocation(
-    app.parse(argv=["--value", "text", "go", "--value", "2"]),
-  )
+  let explicit = expect_invocation(app.parse(argv=["go", "--value", "2"]))
   assert_true(explicit.context.get_int("value") == Some(2))
   assert_true(
-    app.parse(argv=["--value", "text", "go", "--value", "bad"])
+    app.parse(argv=["go", "--value", "bad"])
     is Failed(@cmder.CliError::InvalidInteger("value", "bad")),
   )
 }
@@ -82,7 +86,9 @@ test "each selected scope validates its own inputs and unselected branches are s
   assert_true(app.parse(argv=["go"]) is Parsed(_))
   assert_true(
     app.parse(argv=["--value", "bad", "go", "--value", "text"])
-    is Failed(@cmder.CliError::InvalidInteger("value", "bad")),
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="value")
+    ),
   )
 }
 
@@ -131,10 +137,7 @@ test "help version structural errors and delimiters retain precedence" {
   assert_true(
     app.parse(argv=["--count"]) is Failed(@cmder.CliError::ParseError(_)),
   )
-  assert_true(
-    app.parse(argv=["--count", "--help"])
-    is Failed(@cmder.CliError::InvalidInteger(_, _)),
-  )
+  assert_true(app.parse(argv=["--count", "--help"]) is Help(_))
   let literal = expect_invocation(app.parse(argv=["go", "--", "--count=bad"]))
   assert_true(literal.context.get_string("file") == Some("--count=bad"))
 }
@@ -165,7 +168,8 @@ test "required globals and flags work after deeply nested subcommands" {
   assert_true(call.was_provided("region"))
   assert_true(call.was_provided("verbose"))
   assert_true(
-    app.parse(argv=["db", "go"]) is Failed(@cmder.CliError::ParseError(_)),
+    app.parse(argv=["db", "go"])
+    is Failed(@cmder.CliError::MissingOption("count")),
   )
 }
 

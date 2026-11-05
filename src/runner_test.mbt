@@ -8,7 +8,13 @@ test "child local defaults are independent of ancestor local inputs" {
       run=ctx => captured.val = ctx.get_string("mode").unwrap_or(""),
     ),
   ])
-  app.run(argv=["--mode", "root", "go"])
+  assert_true(
+    app.parse(argv=["--mode", "root", "go"])
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="mode")
+    ),
+  )
+  app.run(argv=["go"])
   inspect(captured.val, content="child")
 }
 
@@ -117,13 +123,11 @@ test "callbacks receive globals while ancestor locals remain isolated" {
       ),
     ],
   )
-  app.run(argv=[
-    "--verbose", "--mode", "root", "db", "--region", "west", "up", "--mode", "child",
-  ])
+  app.run(argv=["--verbose", "db", "--region", "west", "up", "--mode", "child"])
   inspect(verbose.val, content="true")
   inspect(region.val, content="west")
   inspect(mode.val, content="child")
-  app.run(argv=["--mode", "root", "db", "up"])
+  app.run(argv=["db", "up"])
   inspect(verbose.val, content="false")
   inspect(mode.val, content="")
 }

@@ -19,7 +19,12 @@ test "local required options constrain only the selected command" {
   assert_eq(seen.val, "root")
   app.run(argv=["go"])
   assert_eq(seen.val, "child")
-  app.run(argv=["--token", "unused", "go"])
+  assert_true(
+    app.parse(argv=["--token", "unused", "go"])
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="token")
+    ),
+  )
   assert_eq(seen.val, "child")
   assert_true(app.parse(argv=["go", "--token", "x"]) is Failed(_))
 }
@@ -48,7 +53,9 @@ test "nested locals and repeated names have independent required checks" {
   assert_true(group.context.get_int("token") == Some(2))
   assert_true(
     app.parse(argv=["--token", "root", "group", "--token", "2", "leaf"])
-    is Failed(@cmder.CliError::MissingOption("token")),
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="token")
+    ),
   )
   let leaf = expect_invocation(
     app.parse(argv=["group", "leaf", "--token", "child"]),
@@ -57,7 +64,7 @@ test "nested locals and repeated names have independent required checks" {
 }
 
 ///|
-test "explicit ancestor integer inputs remain checked" {
+test "explicit ancestor integer inputs are rejected instead of discarded" {
   let app = @cmder.cli(
     name="app",
     options=[@cmder.int("count", required=true)],
@@ -66,11 +73,15 @@ test "explicit ancestor integer inputs remain checked" {
   ignore(expect_invocation(app.parse(argv=["go"])))
   assert_true(
     app.parse(argv=["--count", "bad", "go"])
-    is Failed(@cmder.CliError::InvalidInteger("count", "bad")),
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="count")
+    ),
   )
   assert_true(
     app.parse(argv=["--count", "2147483648", "go"])
-    is Failed(@cmder.CliError::IntegerOutOfRange("count", "2147483648")),
+    is Failed(
+      @cmder.CliError::UnexpectedLocalArgument(command="app", name="count")
+    ),
   )
   assert_true(
     app.parse(argv=["--count", "bad", "--unknown", "go"])
@@ -88,7 +99,9 @@ test "global required values constrain every descendant and remain readable" {
     ],
   )
   for argv in [[], ["group"], ["group", "leaf"]] {
-    assert_true(app.parse(argv~) is Failed(@cmder.CliError::ParseError(_)))
+    assert_true(
+      app.parse(argv~) is Failed(@cmder.CliError::MissingOption("token")),
+    )
   }
   for
     argv in [

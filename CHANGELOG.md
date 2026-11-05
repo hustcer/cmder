@@ -1,10 +1,34 @@
 # Changelog
 
+## 0.6.0 - 2026-11-05
+
+### Changed
+
+- **Breaking:** Reject explicitly supplied ancestor-local options with `UnexpectedLocalArgument` instead of silently discarding them. Shared values require `global=true`.
+- **Breaking:** Missing required global options now return `MissingOption`, like required local options. Missing required positionals return `MissingPositional` rather than `ParseError`.
+- **Breaking:** Raising getters validate visible names and Boolean/text compatibility, returning `UnknownArgument` or `ArgumentTypeMismatch`. Raw integer reads and string-to-integer conversion remain supported.
+- Separate invocation, override and help responsibilities, and share positional cardinality and inherited-global logic.
+
+### Added
+
+- Add `multiple=false` for single-value positionals, including the final positional; retain the existing multiple-value default.
+- Add checked Boolean/text/collection getters and `run_or_exit` for standalone application entry points.
+- Allow localized or disabled scope notices with `required_scope_notice`.
+
+### Fixed
+
+- Keep child examples and scope notices out of parent command lists, and preserve required annotations in error help without a second parse or help-routing abort.
+- Preserve negative integer spellings without consuming following flags or the `--` separator; pending integer options allow actual help requests.
+- Generate examples for argument-free leaves, including required ancestor globals.
+- Correct migration history and positional/subcommand documentation in both READMEs.
+- Check README snippets in a temporary copy of the current module outside the source tree, and calculate process-check counts from case lists.
+
 ## 0.5.1 - 2026-11-05
 
 ### Changed
 
 - **Breaking:** Required local options apply only when their command is selected; ancestor-local requirements no longer block descendant commands. Required global options still apply to descendants.
+- **Breaking:** Missing selected-local required options return `MissingOption` instead of `ParseError`.
 - Allow dots, plus signs, and printable non-ASCII characters in application and command names.
 
 ### Fixed

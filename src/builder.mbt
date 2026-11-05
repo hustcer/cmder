@@ -1,11 +1,4 @@
 ///|
-priv enum ParserMode {
-  Interop
-  Invocation
-  Help
-}
-
-///|
 fn build_option_to_flag(opt : OptionDef) -> @argparse.FlagArg {
   @argparse.FlagArg(
     opt.name,
@@ -18,7 +11,7 @@ fn build_option_to_flag(opt : OptionDef) -> @argparse.FlagArg {
 ///|
 fn build_option_to_option_arg(
   opt : OptionDef,
-  defer_local_required : Bool,
+  defer_required : Bool,
 ) -> @argparse.OptionArg {
   let defaults = option_default(opt).map(value => [value]).unwrap_or([])
   @argparse.OptionArg(
@@ -26,16 +19,29 @@ fn build_option_to_option_arg(
     short?=opt.short,
     about=opt.description,
     default_values=defaults,
-    required=opt.required && (!defer_local_required || opt.global),
+    required=opt.required && !defer_required,
     global=opt.global,
-    allow_hyphen_values=opt.kind is IntOpt(_),
+    allow_hyphen_values=opt.kind is IntOpt(_) && !defer_required,
   )
 }
 
 ///|
-fn build_positional(pos : PositionalDef, last : Bool) -> @argparse.PositionArg {
-  let lower = if pos.required { 1 } else { 0 }
-  let range = if last {
+fn positional_is_multiple(
+  pos : PositionalDef,
+  index : Int32,
+  total : Int32,
+) -> Bool {
+  pos.multiple && index == total - 1
+}
+
+///|
+fn build_positional(
+  pos : PositionalDef,
+  multiple : Bool,
+  defer_required : Bool,
+) -> @argparse.PositionArg {
+  let lower = if pos.required && !defer_required { 1 } else { 0 }
+  let range = if multiple {
     @argparse.ValueRange(lower~)
   } else {
     @argparse.ValueRange(lower~, upper=1)
@@ -44,35 +50,10 @@ fn build_positional(pos : PositionalDef, last : Bool) -> @argparse.PositionArg {
 }
 
 ///|
-fn command_about(cmd : CommandDef, mode : ParserMode) -> String {
-  let parts : Array[String] = []
-  if !cmd.description.is_empty() {
-    parts.push(cmd.description)
-  }
-  let scope_note = match mode {
-    Interop => false
-    Help | Invocation => true
-  }
-  if scope_note && !cmd.subcommands.is_empty() {
-    let locals = cmd.options.filter(opt => opt.required && !opt.global)
-    if !locals.is_empty() {
-      let names = locals.map(opt => "--\{opt.name}").join(", ")
-      parts.push(
-        "Local required options (\{names}) apply only to this command's own execution. Subcommands require their own local options and inherited globals.",
-      )
-    }
-  }
-  if !cmd.examples.is_empty() {
-    parts.push("Examples:\n  \{cmd.examples.join("\n  ")}")
-  }
-  parts.join("\n\n")
-}
-
-///|
 fn build_parser(
   cmd : CommandDef,
   version? : String,
-  mode~ : ParserMode = Help,
+  defer_required~ : Bool = false,
 ) -> @argparse.Command {
   let flags : Array[@argparse.FlagArg] = []
   let options : Array[@argparse.OptionArg] = []
@@ -80,16 +61,22 @@ fn build_parser(
     match opt.kind {
       BoolOpt => flags.push(build_option_to_flag(opt))
       StringOpt(_) | IntOpt(_) =>
-        options.push(build_option_to_option_arg(opt, mode is Invocation))
+        options.push(build_option_to_option_arg(opt, defer_required))
     }
   }
   let positionals = cmd.positionals.mapi((i, pos) => {
-    build_positional(pos, i == cmd.positionals.length() - 1)
+    build_positional(
+      pos,
+      positional_is_multiple(pos, i, cmd.positionals.length()),
+      defer_required,
+    )
   })
-  let subcommands = cmd.subcommands.map(sub => build_parser(sub, mode~))
+  let subcommands = cmd.subcommands.map(sub => {
+    build_parser(sub, defer_required~)
+  })
   @argparse.Command(
     cmd.name,
-    about=command_about(cmd, mode),
+    about=cmd.description,
     version?=version.map(v => v[:]),
     flags~,
     options~,
@@ -99,16 +86,23 @@ fn build_parser(
 }
 
 ///|
-fn build_cli_command(app : CliApp) -> @argparse.Command {
-  build_parser(app.root, version=app.version)
-}
-
-///|
 /// Explicit argparse interop. Validates definitions and builds the underlying
 /// parser with argparse's ancestor-required semantics, without cmder's selected-
 /// local required checks, integer checks or callback execution. Normal consumers
 /// should use CliApp::parse instead.
+///
+/// ```mbt check
+/// test {
+///   let parser = @cmder.build_command(@cmder.command(name="go"))
+///   assert_true(parser.render_help().has_prefix("Usage: go"))
+/// }
+/// ```
 pub fn build_command(cmd : CommandDef) -> @argparse.Command raise CliError {
   validate_definition(cmd, [], [])
-  build_parser(cmd, mode=Interop)
+  let description = if cmd.examples.is_empty() {
+    cmd.description
+  } else {
+    "\{cmd.description}\n\nExamples:\n  \{cmd.examples.join("\n  ")}"
+  }
+  build_parser({ ..cmd, description, })
 }

@@ -12,13 +12,13 @@ pub fn bool(String, short? : Char, description? : String, global? : Bool) -> Opt
 
 pub fn build_command(CommandDef) -> @argparse.Command raise CliError
 
-pub fn cli(name~ : String, version? : String, description? : String, options? : ArrayView[OptionDef], positionals? : ArrayView[PositionalDef], examples? : ArrayView[String], commands? : ArrayView[CommandDef], run? : (Context) -> Unit raise) -> CliApp raise CliError
+pub fn cli(name~ : String, version? : String, description? : String, options? : ArrayView[OptionDef], positionals? : ArrayView[PositionalDef], examples? : ArrayView[String], commands? : ArrayView[CommandDef], run? : (Context) -> Unit raise, required_scope_notice? : String) -> CliApp raise CliError
 
-pub fn command(name~ : String, description? : String, options? : ArrayView[OptionDef], positionals? : ArrayView[PositionalDef], examples? : ArrayView[String], subcommands? : ArrayView[CommandDef], run? : (Context) -> Unit raise) -> CommandDef
+pub fn command(name~ : String, description? : String, options? : ArrayView[OptionDef], positionals? : ArrayView[PositionalDef], examples? : ArrayView[String], subcommands? : ArrayView[CommandDef], run? : (Context) -> Unit raise, required_scope_notice? : String) -> CommandDef
 
 pub fn int(String, short? : Char, description? : String, required? : Bool, default? : Int32, global? : Bool) -> OptionDef
 
-pub fn positional(String, description? : String, required? : Bool) -> PositionalDef
+pub fn positional(String, description? : String, required? : Bool, multiple? : Bool) -> PositionalDef
 
 pub fn string(String, short? : Char, description? : String, required? : Bool, default? : String, global? : Bool) -> OptionDef
 
@@ -28,12 +28,15 @@ pub(all) suberror CliError {
   ParseError(String)
   InvalidDefinition(String)
   UnknownArgument(String)
+  ArgumentTypeMismatch(name~ : String, expected~ : String)
+  UnexpectedLocalArgument(command~ : String, name~ : String)
   InvalidOverride(String, String)
   MissingCommand
   UnknownCommand(Array[String])
   MissingSubcommand(String, Array[String])
   MissingHandler(String)
   MissingOption(String)
+  MissingPositional(String)
   InvalidInteger(String, String)
   IntegerOutOfRange(String, String)
 }
@@ -63,6 +66,7 @@ pub fn CliApp::render_schema(Self) -> String
 pub fn CliApp::render_schema_json(Self) -> @json.Json
 pub fn CliApp::render_zsh_completion(Self) -> String
 pub fn CliApp::run(Self, argv? : ArrayView[String]) -> Unit raise
+pub fn CliApp::run_or_exit(Self, argv? : ArrayView[String]) -> Unit
 
 pub struct CommandDef {
   name : String
@@ -72,17 +76,21 @@ pub struct CommandDef {
   examples : ReadOnlyArray[String]
   subcommands : ReadOnlyArray[CommandDef]
   run : ((Context) -> Unit raise)?
+  required_scope_notice : String?
 }
 
 pub struct Context {
   // private fields
 }
 pub fn Context::get_bool(Self, String) -> Bool
+pub fn Context::get_bool_checked(Self, String) -> Bool raise CliError
 pub fn Context::get_int(Self, String) -> Int32? raise CliError
 pub fn Context::get_int_required(Self, String) -> Int32 raise CliError
 pub fn Context::get_string(Self, String) -> String?
+pub fn Context::get_string_checked(Self, String) -> String? raise CliError
 pub fn Context::get_string_required(Self, String) -> String raise CliError
 pub fn Context::get_strings(Self, String) -> Array[String]
+pub fn Context::get_strings_checked(Self, String) -> Array[String] raise CliError
 pub fn Context::source_of(Self, String) -> ValueSource?
 
 pub struct Invocation {
@@ -127,6 +135,7 @@ pub struct PositionalDef {
   name : String
   description : String
   required : Bool
+  multiple : Bool
 }
 
 #derive(Eq, @debug.Debug)

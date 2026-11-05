@@ -23,7 +23,7 @@ test "string getters distinguish empty values from absence" {
   assert_eq(ctx.get_string_required("name"), "")
   assert_true(ctx.get_string("missing") is None)
   try ctx.get_string_required("missing") catch {
-    @cmder.CliError::MissingOption("missing") => ()
+    @cmder.CliError::UnknownArgument("missing") => ()
     error => raise error
   } noraise {
     _ => fail("expected missing value")

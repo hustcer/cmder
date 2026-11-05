@@ -31,12 +31,11 @@ See the sections below for current usage and [CHANGELOG.md](CHANGELOG.md) for ve
 moon add hustcer/cmder
 ```
 
-Add the library to the consuming package's `moon.pkg`. Executable examples also use `core/env` for exit status:
+Add the library to the consuming package's `moon.pkg`:
 
 ```text
 import {
   "hustcer/cmder",
-  "moonbitlang/core/env",
 }
 pkgtype(kind: "executable")
 ```
@@ -68,12 +67,7 @@ fn main raise {
       }
     },
   )
-  app.run() catch {
-    error => {
-      eprintln(error)
-      @env.exit(1)
-    }
-  }
+  app.run_or_exit()
 }
 ```
 
@@ -85,7 +79,7 @@ HELLO, BOB!
 HELLO, BOB!
 ```
 
-`--help` and `--version` are generated automatically. Application callbacks have type `(Context) -> Unit raise`: checked getter errors and business errors propagate unchanged through dispatch and run. The application entry point chooses error reporting and exit status. `eprintln` writes to stderr on native and JS; the current wasm-gc runtime falls back to stdout.
+`--help` and `--version` are generated automatically. Application callbacks have type `(Context) -> Unit raise`: checked getter errors and business errors propagate unchanged through dispatch and run. `run_or_exit` reports errors and exits one; help/version exit zero. Hosts that need custom reporting use `run` or `parse`. Error output uses stderr on native and JS; the current wasm-gc runtime falls back to stdout.
 
 `cli` validates the entire definition tree during construction and raises `CliError::InvalidDefinition` for invalid names, duplicate arguments/short flags/subcommands, positional ordering errors, and conflicts with inherited global arguments. This is why the example uses `fn main raise`.
 
@@ -106,9 +100,9 @@ let options = [
 
 `short` and `default` accept direct values. A string/integer default makes the option optional even with `required=true`. Boolean flags are optional and initially false. Helpers create normalized, read-only `OptionDef` values; direct record construction is not supported. `OptionKind` stores a `String?` default for `StringOpt`, an `Int32?` default for `IntOpt`, and no value default for `BoolOpt`. Missing short flags are represented by `None`.
 
-All integer options are checked during `parse` and `run`: decimal Int32 syntax with an optional leading minus, and range -2147483648 through 2147483647. Leading zeroes have no length cap. Negative values support `--delta -1`, `-d -1` and `--delta=-1`. Raw spellings remain available through `get_string`. Positive-only values, product ranges and relationships remain application rules.
+All integer options are checked during `parse` and `run`: decimal Int32 syntax with an optional leading minus, and range -2147483648 through 2147483647. Leading zeroes have no length cap. Negative values support `--delta -1`, `-d -1` and `--delta=-1`. Integer options do not consume following flags or `--`; `--count --help` displays help. Raw spellings remain available through `get_string`. Positive-only values, product ranges and relationships remain application rules.
 
-Root and nested commands accept `positionals`. Required positionals must precede optional ones. Each positional except the last accepts at most one value; the final positional accepts all remaining values:
+Root and nested commands accept `positionals`. Required positionals must precede optional ones. Each positional except the last accepts at most one value; the final positional accepts all remaining values by default. Set `multiple=false` on a positional to limit it to one value, including the final one; extra input then fails parsing:
 
 <!-- cmder-example {"id":"positionals","kind":"raising","binds":["app"]} -->
 
@@ -128,7 +122,7 @@ let app = @cmder.cli(
 
 `copy a.txt b.txt c.txt` binds `source="a.txt"` and `destinations=["b.txt", "c.txt"]`.
 
-A command with subcommands may have optional positionals, but cannot have required positionals: argparse would make its subcommands unreachable, so construction rejects that combination. After positional input starts, subsequent words belong to that command's positional execution and cannot select a subcommand.
+A command with subcommands may have optional positionals, but cannot have required positionals: argparse would make its subcommands unreachable, so construction rejects that combination. After positional input starts, a later subcommand name causes a parse error. Use `--` before that name to read it literally: `app x.txt -- go` treats both words as positional values.
 
 ## Subcommands and Scope
 
@@ -158,9 +152,9 @@ let app = @cmder.cli(
 
 Global options are accepted at their declaring command and anywhere below it. Both `myapp -v db migrate` and `myapp db migrate -v` work; `--region` becomes available after entering `db`. Globals have one definition and cannot be redefined or shadowed by descendant names or short flags. Explicit input takes precedence over that argument's default.
 
-Other arguments are local. A callback sees the selected command's locals and its inherited globals, not ancestor-local values. Local names may repeat in separate scopes without merging: a root `string("count")` never supplies a child `int("count")`. Mark a parameter global when descendants need to read it.
+Other arguments are local. A callback sees the selected command's locals and its inherited globals. Explicit ancestor-local options followed by a subcommand fail with `UnexpectedLocalArgument`, rather than silently losing their values. Ancestor-local defaults do not leak. Local names may repeat in separate scopes without merging: a root `string("count")` never supplies a child `int("count")`. Mark a parameter global when descendants need to read it.
 
-Local `required=true` options are required only when their owning command is selected. A root-local required `token` does not block `myapp db migrate`, and is not visible to that callback. Explicit ancestor-local input is still checked for valid type. A required global is required throughout its declaring subtree and stays readable in descendant callbacks. Help names required locals and explains their scope when subcommands exist; generated descendant examples include required ancestor globals, never ancestor locals. Missing selected-local required options return `Failed(CliError::MissingOption(name))`.
+Local `required=true` options are required only when their owning command is selected. A root-local required `token` does not block `myapp db migrate`. A required global is required throughout its declaring subtree and stays readable in descendant callbacks. Missing local/global required options return `Failed(CliError::MissingOption(name))`; missing required positionals return `MissingPositional(name)`. Help and error Usage retain required annotations. Help names required locals and explains their scope when subcommands exist; `required_scope_notice="..."` on `cli` or `command` replaces this notice for localization, and an empty string disables it. Examples and notices appear only in their own command's help, outside parent command lists. Generated examples include required ancestor globals, even for leaves without local arguments.
 
 Only the selected callback runs. Selecting a group with a callback executes that callback; selecting a deeper command executes only the deeper callback. Without a callback, dispatch raises `MissingCommand` for the root, `MissingSubcommand` for a group, or `MissingHandler` for a leaf.
 
@@ -170,13 +164,16 @@ Only the selected callback runs. Selecting a group with a callback executes that
 | --------------------------- | ----------------------- | ------------------------------------------------ |
 | `get_bool(name)`            | `Bool`                  | False when absent                                |
 | `get_string(name)`          | `String?`               | First raw value, including integer spelling      |
-| `get_string_required(name)` | `String raise CliError` | Missing values raise `MissingOption`             |
+| `get_string_required(name)` | `String raise CliError` | Missing values raise `MissingOption` / `MissingPositional` |
 | `get_int(name)`             | `Int32? raise CliError` | None only for absence; format/range errors raise |
 | `get_int_required(name)`    | `Int32 raise CliError`  | Missing, malformed and overflow values raise     |
 | `get_strings(name)`         | `Array[String]`         | Fresh copy of all values; empty when absent      |
+| `get_bool_checked(name)`    | `Bool raise CliError`   | Declared Boolean flag; false when absent         |
+| `get_string_checked(name)`  | `String? raise CliError`| Declared text argument; None when absent         |
+| `get_strings_checked(name)` | `Array[String] raise CliError` | Declared text argument; fresh value copy   |
 | `source_of(name)`           | `ValueSource?`          | Effective provenance, or None when absent        |
 
-`get_int` and `get_int_required` share one conversion rule. Invalid syntax raises `InvalidInteger(name, raw)`; overflow raises `IntegerOutOfRange(name, raw)`. Reading a string-valued argument as an integer also uses these checks. A getter default applies to missing input, never to invalid input.
+Raising getters validate visible names: misspellings and out-of-scope names raise `UnknownArgument`, and incompatible Boolean/text reads raise `ArgumentTypeMismatch`. The three non-raising getters retain their loose missing-name behavior for compatibility. Text getters accept strings, raw integers and positionals. `get_int` and `get_int_required` also accept string/positional text and share one conversion rule: invalid syntax raises `InvalidInteger(name, raw)`; overflow raises `IntegerOutOfRange(name, raw)`. Only an absent declared value returns None. Required getters distinguish `MissingOption` from `MissingPositional`.
 
 `CliError::message()` and `to_string()` produce display-ready diagnostics. `ParseError(message)` preserves argparse's diagnostic text and help; do not parse it for machine-readable categories. Business callback errors keep their original error type and can be handled centrally by the host.
 
@@ -184,7 +181,7 @@ Only the selected callback runs. Selecting a group with a callback executes that
 
 `parse` requires explicit argv without the executable name. It performs no process I/O, reads no process environment, and invokes no callbacks. It returns `Parsed`, `Help`, `Version` or `Failed`. Help/version and structural parser errors keep argparse's precedence over integer checks; only selected scopes undergo input type checks.
 
-Place this flow in a raising host function; the application entry point handles propagated errors as in Quick Start.
+Place this flow in a raising host function. Import `moonbitlang/core/env` when the host controls process exit, as below; `run_or_exit` provides default reporting for standalone tools.
 
 <!-- cmder-example {"id":"host-dispatch","kind":"raising","stdout":"3\n"} -->
 
@@ -221,7 +218,7 @@ Definitions copy caller-owned collections into read-only arrays. Parsed results 
 
 `call.source_of(name)` and `call.context.source_of(name)` return `Argv`, `Default`, `Override` or None. `Env` is reserved for the underlying source model; current definitions do not configure environment bindings. Unchanged values preserve their sources; overridden values use `Override`, even when equal to argv. Clearing an optional positional makes it absent with no effective source. `was_provided(name)` is true only when the current effective source is `Argv`.
 
-`app.run()` is the convenience entry point: it reads process argv, parses and dispatches, and prints/exits zero for help or version. `app.run(argv=[...])` uses explicit arguments. Parser and callback errors propagate to its caller. Embedded hosts use `parse` and `call.dispatch()` to retain control over output and exit status.
+`app.run()` reads process argv, parses and dispatches, and prints/exits zero for help or version. `app.run(argv=[...])` uses explicit arguments. Parser and callback errors propagate to its caller. `app.run_or_exit()` additionally reports failures and exits one. Embedded hosts use `parse` and `call.dispatch()` to retain control over output and exit status. The default version string is `0.0.0`; specify `version` for a released tool.
 
 ## Exporting Definitions and Completion
 
@@ -266,15 +263,15 @@ source ./myapp.fish
 | `run=Some(fn(ctx) { ... })`                    | `run=(ctx) => { ... }`; errors may propagate                    |
 | `app.run(argv=Some(args))`                     | `app.run(argv=args)`                                            |
 | `get_int_checked(name)`                        | `get_int(name)`; malformed input now raises                     |
-| `validate_types=true`                          | Remove it; declared integers are always checked                 |
 | Implicit ancestor parameter inheritance        | Mark shared options `global=true`                               |
-| `app.dispatch(call)`                           | `call.dispatch()`                                               |
 | Direct Context/path mutation                   | `call.with_overrides(...)`                                      |
 | `Context.subcommand` / `get_subcommand()`      | `Invocation.command_path`                                       |
 | Public definition record literals              | `cli`, `command`, `string`, `int`, `bool`, `positional` helpers |
 | `app.name`, `app.commands`, `app.root_options` | `app.root.name`, `app.root.subcommands`, `app.root.options`     |
 
 `OptionType` is replaced by `OptionKind` with typed default payloads. Definitions fail at construction rather than when the first argv is parsed. These are intentional breaking changes.
+
+From 0.5.1 to 0.6: explicit ancestor-local options now fail instead of disappearing; use `global=true` or pass the option to its owning command. Missing global required options now use `MissingOption`, and missing required positionals use `MissingPositional`; in 0.5.1 both used `ParseError`. Raising getters reject unknown names and Boolean/text mismatches. Existing non-raising getters and the final positional's multiple-value default remain available. `multiple=false`, checked getters and `run_or_exit` are additive APIs. The unreleased post-0.3 development APIs `validate_types` and `app.dispatch(call)` were removed in 0.5; they were not part of v0.3.0.
 
 ## Local Development
 

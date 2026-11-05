@@ -49,15 +49,21 @@ def checked [args: list<string>]: nothing -> string {
 # Check bilingual code/metadata parity; compile and execute all marked snippets.
 def main [] {
   cd ($env.CURRENT_FILE | path dirname | path dirname)
+  let repo = $env.PWD
   let english = (open --raw README.md | str replace --all "\r\n" "\n")
   let chinese = (open --raw README.zh.md | str replace --all "\r\n" "\n")
   assert ((fences $english) == (fences $chinese)) 'README code blocks differ between languages'
   let snippets = (examples $english)
   assert ($snippets == (examples $chinese)) 'README example metadata differs between languages'
-  let scratch = (mktemp --directory --tmpdir-path ($env.PWD | path join src internal) readme_check_XXXXXXXX)
+  let scratch = (mktemp --directory)
   try {
+    # Snapshot the current worktree into an owned module outside the source tree.
+    # Interrupted checks cannot leave packages that affect later builds.
+    cp moon.mod ($scratch | path join moon.mod)
+    cp --recursive src ($scratch | path join src)
+    cd $scratch
     for example in $snippets {
-      let package = ($scratch | path join $example.meta.id)
+      let package = ($scratch | path join src internal readme_check $example.meta.id)
       mkdir $package
       let source = if $example.meta.kind == program { $example.code } else {
         let header = if $example.meta.kind == pure { "///|\nfn main {\n" } else { "///|\nfn main raise {\n" }
@@ -75,7 +81,7 @@ def main [] {
     }
     for target in [native js wasm-gc] {
       for example in $snippets {
-        let package = ($scratch | path join $example.meta.id)
+        let package = ($scratch | path join src internal readme_check $example.meta.id)
         let args = ($example.meta.args? | default [])
         let output = (checked ([run $package --target $target --] | append $args))
         assert equal $output ($example.meta.stdout? | default '') $'Unexpected output: ($example.meta.id) / ($target)'
@@ -91,6 +97,7 @@ def main [] {
     }
     print $'README: (fences $english | length) bilingual code blocks and example metadata match'
   } finally {
+    cd $repo
     # Only this invocation's randomly created source packages are removed.
     rm --recursive $scratch
   }

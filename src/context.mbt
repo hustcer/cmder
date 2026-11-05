@@ -32,7 +32,8 @@ pub fn Context::get_string(self : Context, name : String) -> String? {
 }
 
 ///|
-/// Returns the first value, raising CliError::MissingOption if it is absent.
+/// Reads declared text, raising MissingOption/MissingPositional if absent,
+/// UnknownArgument for an unknown name, or ArgumentTypeMismatch for a flag.
 ///
 /// ```mbt check
 /// test {
@@ -47,9 +48,9 @@ pub fn Context::get_string_required(
   self : Context,
   name : String,
 ) -> String raise CliError {
-  match self.get_string(name) {
+  match self.get_string_checked(name) {
     Some(v) => v
-    None => raise CliError::MissingOption(name)
+    None => raise self.missing_value(name)
   }
 }
 
@@ -57,6 +58,7 @@ pub fn Context::get_string_required(
 /// Reads a signed decimal Int32. Only absence returns None; malformed input
 /// raises InvalidInteger and overflow raises IntegerOutOfRange. Leading zeroes
 /// have no length limit. Declared integer options are already checked by parse.
+/// Unknown names and Boolean flags raise UnknownArgument/ArgumentTypeMismatch.
 ///
 /// ```mbt check
 /// test {
@@ -66,13 +68,14 @@ pub fn Context::get_string_required(
 /// }
 /// ```
 pub fn Context::get_int(self : Context, name : String) -> Int32? raise CliError {
-  guard self.get_string(name) is Some(value) else { return None }
+  guard self.get_string_checked(name) is Some(value) else { return None }
   Some(parse_integer_value(name, value))
 }
 
 ///|
-/// Parses a required integer, raising MissingOption when absent and a checked
-/// integer error when malformed or outside Int32. No application range is imposed.
+/// Parses required declared text as an integer. MissingOption/MissingPositional
+/// distinguish absent values; name, kind and integer errors remain checked.
+/// No application range is imposed.
 ///
 /// ```mbt check
 /// test {
@@ -87,7 +90,7 @@ pub fn Context::get_int_required(
 ) -> Int32 raise CliError {
   match self.get_int(name) {
     Some(v) => v
-    None => raise CliError::MissingOption(name)
+    None => raise self.missing_value(name)
   }
 }
 
